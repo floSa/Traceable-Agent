@@ -35,7 +35,11 @@ from pathlib import Path
 from typing import Any
 
 from engine.checks.values import missing_values
-from harness.reference_questions import ReferenceQuestion, load_reference_questions
+from harness.reference_questions import (
+    ReferenceQuestion,
+    derive_scope,
+    load_reference_questions,
+)
 
 VERT, ROUGE, JAUNE, GRIS, RAZ = "\033[32m", "\033[31m", "\033[33m", "\033[90m", "\033[0m"
 
@@ -147,8 +151,7 @@ def interroger_agent(
 
     # Le perimetre vient du SQL de reference quand on l'active ; sinon la base
     # entiere, comme le fait data-analyst-agent aujourd'hui.
-    tables = sorted(question.tables) if scope_reel else TOUTES_LES_TABLES
-    scope = {"tables": tables}
+    scope = derive_scope(question) if scope_reel else {"tables": TOUTES_LES_TABLES}
 
     task = Task(
         id=question.id.lower(),

@@ -190,9 +190,6 @@ class SqlToolPack(BasePack):
         self.cfg = pack_cfg
         self.database = cfg.path(pack_cfg.database)
         self.tables: list[str] = [str(t) for t in (self.scope.get("tables") or [])]
-        # Resultats structures des requetes de CETTE tache, dans l'ordre. Ce
-        # sont eux, et jamais la prose du modele, que verifie un controle.
-        self.tables_produites: list[dict[str, Any]] = []
         self.grain: list[str] = [str(g) for g in (self.scope.get("grain") or [])]
         self.aggregate_before_join: list[str] = [
             str(t).lower() for t in (self.scope.get("aggregate_before_join") or [])

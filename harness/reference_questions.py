@@ -26,7 +26,12 @@ from pathlib import Path
 from typing import Any
 
 from engine.checks.values import Expected
-from engine.toolpacks.sql import referenced_tables
+from engine.toolpacks.sql import _blocs_parentheses, referenced_tables
+
+_JOINT_RE = re.compile(r"\bjoin\b", re.IGNORECASE)
+_GROUPE_PAR_RE = re.compile(
+    r"\bgroup\s+by\b(.*?)(?:\border\s+by\b|\bhaving\b|$)", re.IGNORECASE | re.DOTALL
+)
 
 NB_QUESTIONS_ATTENDU = 13
 
@@ -53,6 +58,46 @@ class ReferenceQuestion:
     @property
     def numero(self) -> int:
         return int(self.id[1:])
+
+
+def derive_scope(question: ReferenceQuestion) -> dict[str, Any]:
+    """Le perimetre d'une tache, deduit de la SOLUTION de reference.
+
+    C'est une facilite du harnais, pas une capacite de production : en vrai,
+    c'est le decomposeur (ou un humain a la GATE 1) qui declare le perimetre.
+    Ici on le derive de la forme du SQL de reference, pour mesurer ce que le
+    perimetre apporte **sans** le regler a la main question par question.
+
+    Quand la solution de reference agrege un fait dans un CTE avant de le
+    joindre, c'est que le grain compte : on le declare, et le controle
+    d'agregation prealable refusera la forme naive.
+    """
+    scope: dict[str, Any] = {"tables": sorted(question.tables)}
+    grain, faits = _grain_de_reference(question.sql)
+    if grain and faits:
+        scope["grain"] = grain
+        scope["aggregate_before_join"] = sorted(faits)
+    return scope
+
+
+def _grain_de_reference(sql: str) -> tuple[list[str], set[str]]:
+    """Le grain d'agregation de la solution, et les faits qu'elle agrege.
+
+    Ne rend quelque chose que si la solution agrege ET joint : sans jointure,
+    aucune mesure ne peut etre dupliquee, donc rien a contraindre.
+    """
+    if not _JOINT_RE.search(sql):
+        return [], set()
+    for bloc in _blocs_parentheses(sql):
+        groupes = _GROUPE_PAR_RE.search(bloc)
+        if groupes is None:
+            continue
+        colonnes = [c.strip() for c in groupes.group(1).split(",")]
+        colonnes = [c for c in colonnes if re.fullmatch(r"[a-zA-Z_]\w*", c)]
+        tables = referenced_tables(bloc)
+        if len(colonnes) >= 2 and tables:
+            return colonnes, tables
+    return [], set()
 
 
 def _nettoyer_question(bloc: str) -> str:

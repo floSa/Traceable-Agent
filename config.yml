@@ -72,6 +72,20 @@ agent:
   max_tokens_per_call: 4096  # plafond d'un seul appel LLM
 
 # -----------------------------------------------------------------------------
+# VERIFICATION CONTRAIGNANTE DES RESULTATS
+# `task.sanity_check` reste une consigne rendue au prompt ; ce sont les `checks`
+# d'une tache qui DECIDENT. La distinction n'est pas theorique : ajouter au
+# prompt « si tu es loin de l'ordre de grandeur documente, ta requete est
+# fausse » a ete essaye sur ce meme jeu de donnees, et mesure sans effet — meme
+# requete naive, aucune auto-correction. Un modele ne se verifie pas lui-meme.
+#
+# binding: false evalue et journalise sans rien arreter — utile pour mesurer ce
+# que les controles attraperaient avant de les rendre bloquants.
+# -----------------------------------------------------------------------------
+checks:
+  binding: true
+
+# -----------------------------------------------------------------------------
 # TROU 6 — REPRISE APRES ECHEC
 # Le fichier etant la seule source de verite, `inv run` reprend a la premiere
 # tache `pending`. Les `blocked` sont ignorees sauf --retry-blocked.
@@ -95,7 +109,14 @@ toolpack:
     max_file_bytes: 200000
 
   sql:
-    database: ./data/warehouse.duckdb
+    database: ./data/maxizoo.duckdb
+    # Le dictionnaire de la source : le DDL dit les types, lui dit ce que les
+    # donnees VEULENT DIRE (6 pieges de modelisation, ordres de grandeur).
+    # Injecte dans la description du pack, donc AVANT la question — un modele
+    # qui apprend au 3e tour que le e-commerce est une ligne de `stores` a deja
+    # rendu son top magasins.
+    dictionary: ./data/maxizoo_dictionnaire.md
+    max_dictionary_chars: 12000
     default_limit: 1000  # LIMIT injecte si la requete n'en a pas
     max_rows: 5000
     read_only: true

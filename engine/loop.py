@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from engine.agent import evaluate_stop_llm, run_task
+from engine.checks.verify import apply_gate
 from engine.config import Config
 from engine.plan import PlanStore
 from engine.providers import BaseProvider
@@ -185,6 +186,7 @@ def run(
         t0 = time.monotonic()
         pack = build_toolpack(plan.toolpack, cfg, task.scope)
         result = run_task(plan, task, pack, provider, cfg, store)
+        result = apply_gate(result, task, pack, binding=cfg.checks.binding, on_event=on_event)
         duration = time.monotonic() - t0
 
         # une seule ecriture atomique : finding + etat + run_log

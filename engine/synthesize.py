@@ -44,17 +44,34 @@ def is_approved(plan: Plan) -> bool:
 
 def render_logbook(plan: Plan) -> str:
     """Le logbook, tel qu'il est sur disque. Aucun artefact n'y entre :
-    les traces sont write-only, un LLM ne les relit jamais."""
+    les traces sont write-only, un LLM ne les relit jamais.
+
+    Une tache qui n'est pas `done` ne transmet **que** son etat et son motif
+    d'echec — jamais la prose que le modele avait redigee. C'est la regle qui
+    donne son sens a la porte de verification : si un chiffre est rejete parce
+    qu'il est faux, il ne doit pas revenir par la bande dans le prompt de
+    synthese, ou il redeviendrait citable.
+    """
     blocs = []
     for task in plan.brief.tasks:
         finding = plan.finding(task.id)
+        entete = f"### `{task.id}` — {task.title}\netat: {task.state}\nquestion: {task.question}"
+
         if finding is None:
-            blocs.append(f"### `{task.id}` — {task.title}\netat: {task.state}, aucun resultat")
+            blocs.append(f"{entete}\naucun resultat")
             continue
+
+        if task.state != "done":
+            motifs = [o.detail for o in finding.checks if not o.passed]
+            raison = " ; ".join(motifs) or finding.summary or "sans motif enregistre"
+            blocs.append(
+                f"{entete}\nAUCUN RESULTAT EXPLOITABLE — cette tache a ete arretee : {raison}\n"
+                "N'invente pas sa reponse : elle fait partie de ce qui n'a PAS ete etabli."
+            )
+            continue
+
         blocs.append(
-            f"### `{task.id}` — {task.title}\n"
-            f"etat: {task.state}\n"
-            f"question: {task.question}\n"
+            f"{entete}\n"
             f"resume: {finding.summary}\n"
             f"insight: {finding.insight}\n"
             f"influence: {finding.influence}"

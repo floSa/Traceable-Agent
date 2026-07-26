@@ -90,6 +90,12 @@ class BasePack:
     def __init__(self, scope: dict[str, Any] | None = None, max_bytes: int = 20000) -> None:
         self.scope = dict(scope or {})
         self.max_bytes = max_bytes
+        # Resultats STRUCTURES produits pendant la tache, au format
+        # {"columns": [...], "rows": [[...]]}. Un controle chiffre porte sur eux
+        # et jamais sur la prose du modele — sinon on lui demanderait de se
+        # juger lui-meme, ce qui ne marche pas. Vide pour un pack qui ne produit
+        # pas de tableaux (`files`).
+        self.tables_produites: list[dict[str, Any]] = []
 
     def tools(self) -> list[ToolSpec]:  # pragma: no cover - surcharge attendue
         return []

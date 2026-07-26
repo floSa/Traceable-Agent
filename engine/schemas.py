@@ -46,6 +46,54 @@ class DecisionFrame(Strict):
     kill_criterion: str = ""
 
 
+class Check(Strict):
+    """Un controle CONTRAIGNANT sur le resultat d'une tache.
+
+    A ne pas confondre avec `Task.sanity_check`, qui est une consigne rendue au
+    prompt. La difference est le coeur du dispositif : une consigne est
+    indicative — mesure faite, un modele la lit et passe outre sans broncher —
+    tandis qu'un `Check` est du code qui lit le resultat STRUCTURE produit par
+    l'outil. On ne demande pas au modele de se verifier ; on verifie.
+    """
+
+    kind: Literal["expect_values", "magnitude", "row_count", "columns"]
+    label: str = ""  # ce qu'on verifie, en clair, pour le plan et le rapport
+
+    # kind="expect_values" : des valeurs de reference doivent etre presentes
+    values: list[Any] = Field(default_factory=list)
+    # kind="magnitude" : un intervalle plausible, tire du dictionnaire de la
+    # source. Ne demande AUCUNE reponse de reference : marche donc en
+    # production, sur une question inedite. C'est le controle porteur.
+    column: str | None = None
+    low: float | None = None
+    high: float | None = None
+    # kind="row_count" / "columns" : `expected_shape` devenu du code
+    min_rows: int | None = None
+    max_rows: int | None = None
+    names: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _coherent(self) -> Check:
+        if self.kind == "expect_values" and not self.values:
+            raise ValueError("expect_values sans valeur ne verifie rien")
+        if self.kind == "magnitude" and self.low is None and self.high is None:
+            raise ValueError("magnitude exige au moins une borne (low ou high)")
+        if self.kind == "row_count" and self.min_rows is None and self.max_rows is None:
+            raise ValueError("row_count exige min_rows ou max_rows")
+        if self.kind == "columns" and not self.names:
+            raise ValueError("columns sans nom ne verifie rien")
+        return self
+
+
+class CheckOutcome(Strict):
+    """Le resultat d'un controle, persiste dans le plan : il dit POURQUOI."""
+
+    kind: str
+    label: str = ""
+    passed: bool
+    detail: str = ""
+
+
 class Task(Strict):
     id: str
     title: str
@@ -58,6 +106,10 @@ class Task(Strict):
     sanity_check: str = ""
     state: TaskState = "pending"
     depends_on: list[str] = Field(default_factory=list)
+    # Controles contraignants. Une tache dont un controle echoue ne passe pas
+    # `done` : elle est `blocked`, donc elle ne debloque aucune dependante et
+    # son chiffre n'atteint jamais la synthese.
+    checks: list[Check] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -100,6 +152,7 @@ class Finding(Strict):
     insight: str = ""
     influence: str = ""
     artifacts: list[str] = Field(default_factory=list)
+    checks: list[CheckOutcome] = Field(default_factory=list)
     # TROU 5 — artefacts visuels : hors perimetre du POC.
     # Le champ existe dans le schema et reste null. Voir README > Extensions.
     chart: str | None = None
@@ -272,6 +325,7 @@ class TaskResult(Strict):
     reason: str = ""
     tokens: int = 0
     tool_calls: int = 0
+    checks: list[CheckOutcome] = Field(default_factory=list)
 
     def to_finding(self) -> Finding:
         return Finding(
@@ -280,8 +334,18 @@ class TaskResult(Strict):
             insight=self.insight,
             influence=self.influence,
             artifacts=list(self.artifacts),
+            checks=list(self.checks),
             chart=None,
         )
+
+    def blocked_by(self, outcomes: list[CheckOutcome], reason: str) -> TaskResult:
+        """La porte : un resultat qui echoue a son controle n'est pas `done`.
+
+        On garde le resume et l'insight — ils documentent ce que le modele a
+        cru trouver — mais l'etat dit `blocked`, et c'est l'etat qui commande
+        la suite.
+        """
+        return self.model_copy(update={"status": "blocked", "reason": reason, "checks": outcomes})
 
 
 class StopEvaluation(Strict):

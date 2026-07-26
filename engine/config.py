@@ -75,6 +75,19 @@ class AgentConfig(Section):
     max_tokens_per_call: int = 4096
 
 
+class ChecksConfig(Section):
+    """La verification contraignante des resultats.
+
+    `sanity_check` reste une consigne rendue au prompt ; ce sont les `checks`
+    d'une tache qui decident. Mesure faite ailleurs : une consigne de relecture
+    dans le prompt ne change rien, un modele ne se corrige pas lui-meme.
+    """
+
+    # Une tache dont un controle echoue passe `blocked` au lieu de `done`.
+    # A false, les controles sont evalues et journalises mais n'arretent rien.
+    binding: bool = True
+
+
 class LoopConfig(Section):
     max_consecutive_blocked: int = 2
     retry_blocked: bool = False
@@ -133,6 +146,7 @@ class Config(Section):
     stop: StopConfig = Field(default_factory=StopConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
+    checks: ChecksConfig = Field(default_factory=ChecksConfig)
     brief: BriefConfig = Field(default_factory=BriefConfig)
     synthesis: SynthesisConfig = Field(default_factory=SynthesisConfig)
     toolpack: ToolpackConfig = Field(default_factory=ToolpackConfig)
