@@ -317,9 +317,49 @@ ORDRES_DE_GRANDEUR: dict[str, dict[str, Any]] = {
 }
 
 
+# Au-dela de quoi on ne contraint plus le nombre de lignes : sur un resultat
+# long, une reponse correcte mais resumee est legitime.
+MAX_LIGNES_CONTRAINTES = 20
+
+
 def checks_du_dictionnaire(question: ReferenceQuestion) -> list[dict[str, Any]]:
     """Les controles disponibles SANS connaitre la reponse."""
     repere = ORDRES_DE_GRANDEUR.get(question.id)
     if repere is None:
         return []
     return [{"kind": "magnitude", **repere}]
+
+
+def checks_de_forme(question: ReferenceQuestion) -> list[dict[str, Any]]:
+    """La FORME attendue du resultat, deduite du resultat de reference.
+
+    Ce sont les controles qui adressent le mode de defaillance dominant mesure :
+    l'agent ne rend pas un nombre aberrant, il ne rend **pas la grandeur
+    demandee** — il repond a une question voisine, et sa reponse a une dimension
+    de moins. Un controle d'ordre de grandeur n'y peut rien ; un controle de
+    forme, si.
+
+    On compte les colonnes, on ne les nomme pas : le modele les nomme librement,
+    exiger un nom exact bloquerait du travail juste. Et la forme n'exige aucune
+    VALEUR de reference : en production, c'est `expected_shape` que le
+    decomposeur ou l'humain de la GATE 1 declare.
+    """
+    controles: list[dict[str, Any]] = []
+    if question.columns:
+        controles.append(
+            {
+                "kind": "column_count",
+                "label": f"{len(question.columns)} dimension(s) attendue(s)",
+                "min_columns": len(question.columns),
+            }
+        )
+    if question.rows and len(question.rows) <= MAX_LIGNES_CONTRAINTES:
+        controles.append(
+            {
+                "kind": "row_count",
+                "label": f"{len(question.rows)} ligne(s) attendue(s)",
+                "min_rows": len(question.rows),
+                "max_rows": len(question.rows),
+            }
+        )
+    return controles

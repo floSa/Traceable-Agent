@@ -370,3 +370,59 @@ def test_un_controle_inapplicable_ne_bloque_pas_la_tache(base: Path) -> None:
     apres = apply_gate(resultat, task, pack)
     assert apres.status == "done"
     assert apres.checks and not apres.checks[0].applicable
+
+
+# ---- controles de forme : le mode de defaillance dominant ---------------
+
+
+FORME_Q7 = [
+    Check(kind="column_count", label="3 dimensions", min_columns=3),
+    Check(kind="row_count", label="7 lignes", min_rows=7, max_rows=7),
+]
+
+
+def test_une_dimension_perdue_est_attrapee() -> None:
+    """Le mode de defaillance dominant, mesure : l'agent ne rend pas un chiffre
+    absurde, il rend une reponse a une question voisine — avec une dimension de
+    moins. Q7 demande le CA par jour ET par canal ; agreger les canaux fait
+    disparaitre le signal recherche."""
+    agrege = [{"columns": ["jour", "ca"], "rows": [[j, 1000.0 * j] for j in range(1, 8)]}]
+    rapport = verify(FORME_Q7, tables=agrege)
+    assert rapport.failed
+    assert "une dimension demandee manque" in rapport.failures[0].detail
+
+
+def test_la_bonne_forme_passe() -> None:
+    correct = [
+        {
+            "columns": ["jour", "ca_magasin", "ca_online"],
+            "rows": [[j, 1000.0 * j, 100.0 * j] for j in range(1, 8)],
+        }
+    ]
+    assert not verify(FORME_Q7, tables=correct).failed
+
+
+def test_des_colonnes_en_trop_ne_bloquent_pas() -> None:
+    """`min_columns` seul : une reponse plus riche que demandee reste juste."""
+    riche = [
+        {
+            "columns": ["jour", "ca_magasin", "ca_online", "total"],
+            "rows": [[j, 1.0, 2.0, 3.0] for j in range(1, 8)],
+        }
+    ]
+    assert not verify([FORME_Q7[0]], tables=riche).failed
+
+
+def test_la_table_la_plus_large_fait_foi() -> None:
+    """Un agent explore : ses resultats intermediaires sont plus etroits que le
+    bon. Juger le dernier, ou le premier, bloquerait du travail juste."""
+    exploration = [
+        {"columns": ["jour"], "rows": [[1]]},
+        {"columns": ["jour", "ca_magasin", "ca_online"], "rows": [[j, 1.0, 2.0] for j in range(1, 8)]},
+    ]
+    assert not verify(FORME_Q7, tables=exploration).failed
+
+
+def test_aucun_resultat_bloque_la_forme() -> None:
+    rapport = verify(FORME_Q7, prose="Le samedi vend le mieux.", tables=[])
+    assert rapport.failed and "aucune dimension produite" in rapport.failures[0].detail

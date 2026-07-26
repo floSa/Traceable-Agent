@@ -37,6 +37,7 @@ from typing import Any
 from engine.checks.values import missing_values
 from harness.reference_questions import (
     ReferenceQuestion,
+    checks_de_forme,
     checks_du_dictionnaire,
     derive_scope,
     load_reference_questions,
@@ -167,7 +168,14 @@ def interroger_agent(
         scope=scope,
         expected_shape="les chiffres demandes, avec leurs libelles",
         sanity_check=question.trap,
-        checks=[Check(**c) for c in (checks_du_dictionnaire(question) if avec_controles else [])],
+        checks=[
+            Check(**c)
+            for c in (
+                checks_du_dictionnaire(question) + checks_de_forme(question)
+                if avec_controles
+                else []
+            )
+        ],
     )
     plan = Plan(
         slug="batterie",

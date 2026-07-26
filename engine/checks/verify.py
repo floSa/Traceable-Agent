@@ -88,7 +88,10 @@ def _appliquer(check: Check, prose: str, tables: Sequence[Mapping[str, Any]]) ->
         return _magnitude(check, tables)
 
     if check.kind == "row_count":
-        lignes = sum(len(t.get("rows") or ()) for t in tables)
+        if not tables:
+            return _issue(check, False, "aucun resultat : aucune ligne produite")
+        # la table la plus fournie, meme raison que ci-dessus
+        lignes = max(len(t.get("rows") or ()) for t in tables)
         trop_peu = check.min_rows is not None and lignes < check.min_rows
         trop = check.max_rows is not None and lignes > check.max_rows
         attendu = f"[{check.min_rows if check.min_rows is not None else '-'}, " \
@@ -97,6 +100,21 @@ def _appliquer(check: Check, prose: str, tables: Sequence[Mapping[str, Any]]) ->
             check,
             not (trop_peu or trop),
             f"{lignes} ligne(s) produites, attendu {attendu}",
+        )
+
+    if check.kind == "column_count":
+        if not tables:
+            return _issue(check, False, "aucun resultat : aucune dimension produite")
+        # la table la plus large : le modele peut avoir produit des resultats
+        # intermediaires plus etroits avant le bon
+        colonnes = max(len(t.get("columns") or ()) for t in tables)
+        trop_peu = check.min_columns is not None and colonnes < check.min_columns
+        trop = check.max_columns is not None and colonnes > check.max_columns
+        attendu = f"[{check.min_columns if check.min_columns is not None else '-'}, " \
+                  f"{check.max_columns if check.max_columns is not None else '-'}]"
+        manque = " — une dimension demandee manque" if trop_peu else ""
+        return _issue(
+            check, not (trop_peu or trop), f"{colonnes} colonne(s), attendu {attendu}{manque}"
         )
 
     if check.kind == "columns":

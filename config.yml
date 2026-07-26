@@ -24,7 +24,9 @@ llm:
   # Retry a feedback : on renvoie au modele l'erreur de validation Pydantic.
   # C'est ce qui rend un petit modele exploitable. Ne pas descendre sous 3.
   max_validation_retries: 3
-  temperature: 0.2
+  # 0 pour la mesure : a 0.2, quatre questions sur treize changeaient de verdict
+  # entre executions identiques, et la variance masquait l'effet mesure.
+  temperature: 0
   # gemma4:e4b emet des tokens de raisonnement que l'API ne compte pas dans
   # usage.completion_tokens : on les estime pour que le budget reste honnete.
   count_reasoning_tokens: true

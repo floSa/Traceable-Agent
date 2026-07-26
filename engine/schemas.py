@@ -56,7 +56,7 @@ class Check(Strict):
     l'outil. On ne demande pas au modele de se verifier ; on verifie.
     """
 
-    kind: Literal["expect_values", "magnitude", "row_count", "columns"]
+    kind: Literal["expect_values", "magnitude", "row_count", "column_count", "columns"]
     label: str = ""  # ce qu'on verifie, en clair, pour le plan et le rapport
 
     # kind="expect_values" : des valeurs de reference doivent etre presentes
@@ -76,6 +76,11 @@ class Check(Strict):
     # kind="row_count" / "columns" : `expected_shape` devenu du code
     min_rows: int | None = None
     max_rows: int | None = None
+    # kind="column_count" : combien de dimensions la reponse doit porter. On
+    # compte les colonnes plutot que de les nommer : le modele les nomme
+    # librement, exiger un nom exact bloquerait du travail juste (cf. D-9).
+    min_columns: int | None = None
+    max_columns: int | None = None
     names: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -86,6 +91,8 @@ class Check(Strict):
             raise ValueError("magnitude exige au moins une borne (low ou high)")
         if self.kind == "row_count" and self.min_rows is None and self.max_rows is None:
             raise ValueError("row_count exige min_rows ou max_rows")
+        if self.kind == "column_count" and self.min_columns is None and self.max_columns is None:
+            raise ValueError("column_count exige min_columns ou max_columns")
         if self.kind == "columns" and not self.names:
             raise ValueError("columns sans nom ne verifie rien")
         return self
