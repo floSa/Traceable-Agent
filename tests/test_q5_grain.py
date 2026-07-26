@@ -217,7 +217,7 @@ def test_le_controle_accepte_le_chiffre_juste(base: Path) -> None:
 def test_une_affirmation_chiffree_sans_donnee_est_rejetee() -> None:
     """« Le panier est de 2,5 » sans requete derriere ne doit pas passer."""
     rapport = verify([PANIER], prose="Le panier article est de 2,5.", tables=[])
-    assert rapport.failed and "aucune donnee a verifier" in rapport.failures[0].detail
+    assert rapport.failed and "rien a verifier" in rapport.failures[0].detail
 
 
 # ---- la porte : le chiffre faux n'entre pas dans le plan ----------------
@@ -301,3 +301,72 @@ def test_le_perimetre_refuse_la_requete_naive_avant_de_l_executer(base: Path, tm
     _, _, dernier = provider.prompts[-1]
     assert "est jointe sans avoir ete agregee" in dernier
     assert "WITH q AS" in dernier  # le refus nomme le correctif
+
+
+# ---- la regression trouvee en mesurant pour de vrai ---------------------
+
+
+RUPTURE = Check(
+    kind="magnitude",
+    label="part des lignes en rupture (~1,1 %)",
+    column_pattern=r"pct|percent|part|taux|share|ratio",
+    low=0.5,
+    high=2.0,
+)
+Q8_JUSTE = [
+    {"columns": ["nb_lignes", "pct_rupture", "ca_perdu"], "rows": [[3041, 1.08, 42066.45]]}
+]
+
+
+def test_un_repere_en_pourcentage_ne_juge_pas_les_comptages() -> None:
+    """Le faux positif qui a bloque une reponse JUSTE en mesure reelle.
+
+    La reponse de Q8 porte trois grandeurs : 3041 lignes, 1,08 %, 42 066 EUR.
+    Un controle « ~1,1 % » sans colonne designee jugeait 3041 contre [0,5 ; 2,0]
+    et bloquait une reponse parfaitement correcte. Un controle qui refuse le
+    juste est pire que pas de controle : il apprend a ignorer les blocages.
+    """
+    assert not verify([RUPTURE], tables=Q8_JUSTE).failed
+
+
+def test_le_meme_repere_bloque_toujours_une_part_absurde() -> None:
+    """La correction ne doit pas avoir desarme le controle."""
+    faux = [{"columns": ["nb_lignes", "pct_rupture"], "rows": [[3041, 15.0]]}]
+    assert verify([RUPTURE], tables=faux).failed
+
+
+def test_sans_motif_le_controle_juge_tout_et_bloque_a_tort() -> None:
+    """La demonstration du defaut, gardee comme mise en garde : c'est le motif
+    de colonne qui rend le controle sain, pas les bornes."""
+    sans_motif = RUPTURE.model_copy(update={"column_pattern": None})
+    assert verify([sans_motif], tables=Q8_JUSTE).failed
+
+
+def test_une_grandeur_introuvable_ne_bloque_pas_mais_reste_visible() -> None:
+    """Trois issues, pas deux. « Je n'ai pas pu verifier » n'est ni un succes
+    ni un echec : le confondre avec l'un des deux ment dans un sens ou dans
+    l'autre."""
+    sans_colonne = [{"columns": ["nb_lignes"], "rows": [[3041]]}]
+    rapport = verify([RUPTURE], tables=sans_colonne)
+
+    assert not rapport.failed  # on n'accuse pas
+    assert rapport.inapplicable  # mais on ne pretend pas avoir verifie
+    assert "non verifie" in rapport.inapplicable[0].detail
+
+
+def test_aucune_donnee_du_tout_bloque_toujours() -> None:
+    """La nuance ne doit pas rouvrir le trou : une affirmation chiffree sans
+    la moindre requete derriere reste bloquee."""
+    rapport = verify([RUPTURE], prose="Les ruptures representent 1,1 %.", tables=[])
+    assert rapport.failed and "rien a verifier" in rapport.failures[0].detail
+
+
+def test_un_controle_inapplicable_ne_bloque_pas_la_tache(base: Path) -> None:
+    pack = SqlToolPack(config_pour(base), {"tables": ["sales_daily"]})
+    pack.call("query", {"sql": "SELECT COUNT(*) AS nb_lignes FROM sales_daily"})
+    task = Task(id="t1", title="x", question="?", checks=[RUPTURE])
+    resultat = TaskResult(task_id="t1", status="done", insight="ok")
+
+    apres = apply_gate(resultat, task, pack)
+    assert apres.status == "done"
+    assert apres.checks and not apres.checks[0].applicable

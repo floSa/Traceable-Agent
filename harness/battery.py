@@ -37,11 +37,16 @@ from typing import Any
 from engine.checks.values import missing_values
 from harness.reference_questions import (
     ReferenceQuestion,
+    checks_du_dictionnaire,
     derive_scope,
     load_reference_questions,
 )
 
 VERT, ROUGE, JAUNE, GRIS, RAZ = "\033[32m", "\033[31m", "\033[33m", "\033[90m", "\033[0m"
+
+# Controles qu'on n'a pas pu appliquer, cumules sur la batterie. Les compter
+# separement evite de faire passer une non-couverture pour un succes.
+NON_VERIFIES = [0]
 
 
 @dataclass
@@ -143,10 +148,12 @@ def interroger_agent(
     cfg,
     provider,
     scope_reel: bool,
+    avec_controles: bool = False,
 ) -> Verdict:
     """Une question = une tache, un contexte vierge, un perimetre declare."""
     from engine.agent import run_task
-    from engine.schemas import Brief, Plan, Task
+    from engine.checks.verify import apply_gate
+    from engine.schemas import Brief, Check, Plan, Task
     from engine.toolpacks.base import build_toolpack
 
     # Le perimetre vient du SQL de reference quand on l'active ; sinon la base
@@ -160,6 +167,7 @@ def interroger_agent(
         scope=scope,
         expected_shape="les chiffres demandes, avec leurs libelles",
         sanity_check=question.trap,
+        checks=[Check(**c) for c in (checks_du_dictionnaire(question) if avec_controles else [])],
     )
     plan = Plan(
         slug="batterie",
@@ -173,6 +181,8 @@ def interroger_agent(
     debut = time.monotonic()
     pack = build_toolpack("sql", cfg, scope)
     resultat = run_task(plan, task, pack, provider, cfg, store=None)
+    resultat = apply_gate(resultat, task, pack, binding=avec_controles)
+    NON_VERIFIES[0] += sum(1 for o in resultat.checks if not o.applicable)
     duree = time.monotonic() - debut
 
     if resultat.status == "blocked":
@@ -200,7 +210,7 @@ def afficher(verdict: Verdict) -> None:
         print(f"       {GRIS}{verdict.detail[:150]}{RAZ}")
 
 
-def bilan(verdicts: list[Verdict]) -> int:
+def bilan(verdicts: list[Verdict], non_verifies: int = 0) -> int:
     comptes = {"juste": 0, "bloque": 0, "faux": 0}
     for v in verdicts:
         comptes[v.statut] += 1
@@ -210,6 +220,10 @@ def bilan(verdicts: list[Verdict]) -> int:
     print(f"  {VERT}juste  {comptes['juste']:>3}{RAZ} / {total}")
     print(f"  {JAUNE}bloque {comptes['bloque']:>3}{RAZ} / {total}")
     print(f"  {ROUGE}faux   {comptes['faux']:>3}{RAZ} / {total}   <- la metrique a conduire a zero")
+    if non_verifies:
+        print()
+        print(f"{GRIS}{non_verifies} controle(s) non verifiable(s) : la grandeur contrainte")
+        print(f"n'etait pas identifiable dans le resultat. Ni un succes, ni un echec.{RAZ}")
     print()
     print(f"{GRIS}Les deux cibles ne partagent pas le meme agent SQL : on compare deux")
     print(f"architectures sur le meme jeu d'epreuve, pas deux versions d'un systeme.{RAZ}")
@@ -225,6 +239,10 @@ def main() -> None:
     parser.add_argument("--config", default="config.yml")
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--scope", action="store_true", help="perimetre issu du SQL de reference")
+    parser.add_argument(
+        "--checks", action="store_true",
+        help="controles contraignants issus des ordres de grandeur du dictionnaire",
+    )
     parser.add_argument("--only", nargs="*", help="ex: --only Q5 Q10")
     args = parser.parse_args()
 
@@ -233,7 +251,8 @@ def main() -> None:
         voulus = {q.upper() for q in args.only}
         questions = [q for q in questions if q.id in voulus]
 
-    print(f"{len(questions)} question(s) · cible {args.target}" + (" · scope" if args.scope else ""))
+    options = "".join(f" · {o}" for o in ("scope" if args.scope else "", "checks" if args.checks else "") if o)
+    print(f"{len(questions)} question(s) · cible {args.target}{options}")
     print()
 
     verdicts: list[Verdict] = []
@@ -250,11 +269,17 @@ def main() -> None:
         provider = build_provider(cfg.llm)
         for question in questions:
             verdicts.append(
-                interroger_agent(question, cfg=cfg, provider=provider, scope_reel=args.scope)
+                interroger_agent(
+                    question,
+                    cfg=cfg,
+                    provider=provider,
+                    scope_reel=args.scope,
+                    avec_controles=args.checks,
+                )
             )
             afficher(verdicts[-1])
 
-    sys.exit(1 if bilan(verdicts) else 0)
+    sys.exit(1 if bilan(verdicts, NON_VERIFIES[0]) else 0)
 
 
 if __name__ == "__main__":

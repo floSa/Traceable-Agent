@@ -260,3 +260,66 @@ def load_reference_questions(export: Path, database: Path) -> list[ReferenceQues
             "l'export a derive, on ne mesure rien sur une base mouvante"
         )
     return resolve(questions, database)
+
+
+# --------------------------------------------------------------------------
+# Les ordres de grandeur du dictionnaire, transcrits en controles
+# --------------------------------------------------------------------------
+#
+# Ils viennent de la table « Ordres de grandeur (pour detecter une requete
+# fausse) » de `dictionnaire.md`, et de nulle part ailleurs. Deux consequences
+# a assumer :
+#
+# 1. Ils n'utilisent AUCUNE reponse de reference. Verifier une reponse avec la
+#    reponse serait circulaire, et ne prouverait rien sur une question inedite.
+#    Ceux-ci sont exactement ce dont on dispose en production.
+# 2. Ils ne couvrent que ce que le dictionnaire documente — 5 questions sur 13.
+#    Les 8 autres ne sont pas protegees. C'est une limite du dictionnaire, pas
+#    du mecanisme, et elle se comble en enrichissant le dictionnaire.
+#
+# L'association « ce repere contraint cette question » est faite a la main :
+# c'est precisement le travail qu'un humain fait a la GATE 1 en relisant le plan.
+
+# `column_pattern` designe la grandeur contrainte. Sans lui, un repere en
+# pourcentage juge aussi les comptages de la meme reponse et bloque a tort —
+# constate sur Q8, dont la reponse juste porte 3041 lignes, 1,08 % et 42 066 EUR.
+ORDRES_DE_GRANDEUR: dict[str, dict[str, Any]] = {
+    "Q1": {
+        "label": "CA 2025 (~10,19 M EUR)",
+        "column_pattern": r"ca|chiffre|revenue|montant|total",
+        "low": 9.0e6,
+        "high": 11.5e6,
+    },
+    "Q4": {
+        "label": "part e-commerce (13,3 % -> 20,3 %)",
+        "column_pattern": r"part|pct|percent|taux|share",
+        "low": 10.0,
+        "high": 25.0,
+    },
+    "Q5": {
+        "label": "panier article (2,06 -> 2,76)",
+        "column_pattern": r"panier|basket|article.*moyen|items?_per",
+        "low": 1.8,
+        "high": 3.2,
+    },
+    "Q8": {
+        "label": "part des lignes en rupture (~1,1 %)",
+        "column_pattern": r"pct|percent|part|taux|share|ratio",
+        "low": 0.5,
+        "high": 2.0,
+    },
+    "Q10": {
+        "label": "uplift Black Friday (x1,5 a x2,0)",
+        "column_pattern": r"uplift|ratio|facteur",
+        "low": 1.2,
+        "high": 2.5,
+    },
+}
+
+
+def checks_du_dictionnaire(question: ReferenceQuestion) -> list[dict[str, Any]]:
+    """Les controles disponibles SANS connaitre la reponse."""
+    repere = ORDRES_DE_GRANDEUR.get(question.id)
+    if repere is None:
+        return []
+    return [{"kind": "magnitude", **repere}]

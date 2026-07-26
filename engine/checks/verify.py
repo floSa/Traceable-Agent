@@ -25,6 +25,7 @@ Quatre familles, par ordre d'utilite decroissante en production :
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,11 +40,16 @@ class CheckReport:
 
     @property
     def failed(self) -> bool:
-        return any(not o.passed for o in self.outcomes)
+        return bool(self.failures)
 
     @property
     def failures(self) -> list[CheckOutcome]:
-        return [o for o in self.outcomes if not o.passed]
+        """Seuls les controles APPLICABLES peuvent echouer."""
+        return [o for o in self.outcomes if o.applicable and not o.passed]
+
+    @property
+    def inapplicable(self) -> list[CheckOutcome]:
+        return [o for o in self.outcomes if not o.applicable]
 
     def reason(self) -> str:
         """Le motif de blocage, ecrit pour un humain qui relira le plan."""
@@ -112,10 +118,23 @@ def _magnitude(check: Check, tables: Sequence[Mapping[str, Any]]) -> CheckOutcom
     nombres du resultat. Le second cas est volontairement severe : sans colonne
     designee, un seul nombre aberrant suffit a bloquer.
     """
+    if not any(t.get("rows") for t in tables):
+        # Rien n'a ete mesure : une affirmation chiffree sans donnee derriere
+        # est exactement ce qu'on veut bloquer.
+        return _issue(check, False, "aucun resultat chiffre : rien a verifier")
+
     valeurs = _valeurs_a_juger(check, tables)
     if not valeurs:
-        cible = f"la colonne `{check.column}`" if check.column else "un resultat chiffre"
-        return _issue(check, False, f"aucune donnee a verifier : {cible} est absente du resultat")
+        # Des donnees existent, mais la grandeur contrainte n'y est pas
+        # identifiable. Bloquer serait accuser a tort ; laisser passer en
+        # silence serait mentir sur la couverture. On le dit.
+        cible = check.column or check.column_pattern
+        return _issue(
+            check,
+            True,
+            f"non verifie : aucune colonne ne correspond a `{cible}` dans le resultat",
+            applicable=False,
+        )
 
     bornes = f"[{check.low if check.low is not None else '-'}, " \
              f"{check.high if check.high is not None else '-'}]"
@@ -136,24 +155,32 @@ def _magnitude(check: Check, tables: Sequence[Mapping[str, Any]]) -> CheckOutcom
 
 
 def _valeurs_a_juger(check: Check, tables: Sequence[Mapping[str, Any]]) -> list[float]:
-    if not check.column:
+    """Les nombres soumis au controle.
+
+    Sans colonne ni motif, on juge tout — severe, et correct seulement quand le
+    resultat ne porte qu'une seule grandeur.
+    """
+    if not check.column and not check.column_pattern:
         return table_numbers(tables)
 
-    voulue = check.column.lower()
+    motif = (
+        re.compile(check.column_pattern, re.IGNORECASE)
+        if check.column_pattern
+        else re.compile(rf"^{re.escape(check.column or '')}$", re.IGNORECASE)
+    )
     valeurs: list[float] = []
     for table in tables:
-        colonnes = [str(c).lower() for c in (table.get("columns") or ())]
-        if voulue not in colonnes:
-            continue
-        index = colonnes.index(voulue)
+        colonnes = [str(c) for c in (table.get("columns") or ())]
+        index = [i for i, nom in enumerate(colonnes) if motif.search(nom)]
         for ligne in table.get("rows") or ():
-            if index >= len(ligne):
-                continue
-            valeur = ligne[index]
-            if isinstance(valeur, bool):
-                continue
-            if isinstance(valeur, (int, float)):
-                valeurs.append(float(valeur))
+            for i in index:
+                if i >= len(ligne):
+                    continue
+                valeur = ligne[i]
+                if isinstance(valeur, bool):
+                    continue
+                if isinstance(valeur, (int, float)):
+                    valeurs.append(float(valeur))
     return valeurs
 
 
@@ -166,8 +193,14 @@ def _facteur(valeur: float, check: Check) -> str:
     return ""
 
 
-def _issue(check: Check, passed: bool, detail: str) -> CheckOutcome:
-    return CheckOutcome(kind=check.kind, label=check.label, passed=passed, detail=detail)
+def _issue(check: Check, passed: bool, detail: str, applicable: bool = True) -> CheckOutcome:
+    return CheckOutcome(
+        kind=check.kind,
+        label=check.label,
+        passed=passed,
+        applicable=applicable,
+        detail=detail,
+    )
 
 
 # --------------------------------------------------------------------------

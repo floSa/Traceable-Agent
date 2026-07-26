@@ -65,6 +65,12 @@ class Check(Strict):
     # source. Ne demande AUCUNE reponse de reference : marche donc en
     # production, sur une question inedite. C'est le controle porteur.
     column: str | None = None
+    # Le modele nomme ses colonnes librement (`taux`, `pct_rupture`, `part`...).
+    # Un motif vaut donc mieux qu'un nom exact pour designer la grandeur
+    # contrainte. Sans l'un des deux, le controle juge TOUS les nombres du
+    # resultat — et bloque a tort des qu'une reponse legitime en contient
+    # plusieurs (constate : 3041 lignes en rupture juge contre un seuil en %).
+    column_pattern: str | None = None
     low: float | None = None
     high: float | None = None
     # kind="row_count" / "columns" : `expected_shape` devenu du code
@@ -86,11 +92,17 @@ class Check(Strict):
 
 
 class CheckOutcome(Strict):
-    """Le resultat d'un controle, persiste dans le plan : il dit POURQUOI."""
+    """Le resultat d'un controle, persiste dans le plan : il dit POURQUOI.
+
+    Trois issues, pas deux. « Je n'ai pas pu verifier » n'est ni un succes ni
+    un echec : le confondre avec l'un des deux ment dans un sens ou dans
+    l'autre. Un controle inapplicable ne bloque pas, mais il reste visible.
+    """
 
     kind: str
     label: str = ""
     passed: bool
+    applicable: bool = True
     detail: str = ""
 
 
