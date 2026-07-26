@@ -41,7 +41,9 @@ CLI (`inv`), qui appelle un service LLM externe et mutualisé.
 | [`engine/synthesize.py`](../engine/synthesize.py) | Rôle 4 — synthèse finale, snapshot immuable | Oui, une fois |
 | [`engine/reporter.py`](../engine/reporter.py) | Rôle 5 — rapport HTML | Non |
 | [`engine/cli.py`](../engine/cli.py) | La CLI `inv` et les deux points de contrôle humain | Non |
+| [`engine/checks/`](../engine/checks/) | La vérification chiffrée et la porte qui bloque | Non |
 | [`engine/toolpacks/`](../engine/toolpacks/) | Le **seul** point de variation métier | Non |
+| [`harness/`](../harness/) | Le banc de mesure (hors moteur) — voir [EVALUATION.md](EVALUATION.md) | Non |
 
 ---
 
@@ -62,7 +64,7 @@ CLI (`inv`), qui appelle un service LLM externe et mutualisé.
 | Tests | pytest | 9.1.1 |
 | Modèle | `gemma4:e4b` via le service central [`llm-service`](../../llm-service/) | endpoint `http://localhost:11434/v1` |
 
-**Aucun framework d'agents.** La boucle fait **183 lignes** de code, lisibles d'un trait.
+**Aucun framework d'agents.** La boucle fait **185 lignes** de code, lisibles d'un trait.
 
 ---
 
@@ -196,6 +198,11 @@ Deux méthodes complémentaires servent le rôle 1 : `scope_hint()` (le format d
 en prose) et `scope_model()` (le **schéma Pydantic** du périmètre — voir la décision
 D-6 plus bas).
 
+Un pack expose enfin `tables_produites` : les résultats **structurés** de ses appels,
+au format `{"columns": [...], "rows": [[...]]}`. C'est sur eux, et jamais sur la prose
+du modèle, que portent les contrôles de la section 7 bis. Un pack qui ne produit pas de
+tableaux (`files`) laisse la liste vide.
+
 ### Les deux packs livrés
 
 | Pack | Outils | Périmètre (`task.scope`) | Dépendance |
@@ -217,6 +224,19 @@ Tous appliqués par `validate()`, donc **avant** toute exécution :
 | `EXPLAIN` préalable | duckdb valide syntaxe et colonnes ; son erreur devient le motif de refus |
 | `LIMIT` injecté | Ajouté si absent (`default_limit`, 1000) |
 | Connexion | Ouverte en `read_only` — défense en profondeur |
+| Grain déclaré | Refuse de joindre un fait non agrégé au grain de la tâche (`aggregate_before_join`) |
+
+Le **dictionnaire de la source** (`toolpack.sql.dictionary`) est injecté dans
+`describe()`, donc **avant** la question et non en réponse à un outil. Un modèle qui
+apprend au troisième tour que le e-commerce est une ligne de `stores` a déjà rendu son
+top magasins.
+
+Le contrôle de grain mérite d'être compris pour ce qu'il est. Il attrape le cas où une
+requête n'utilise que des tables autorisées mais duplique une mesure par la jointure —
+ce que l'allowlist ne voit pas. C'est de l'**analyse structurelle au niveau regex** :
+elle reconnaît une forme de SQL, pas une sémantique. Une réécriture équivalente lui
+échappe. **C'est un fil-piège, pas un théorème** ; la ligne de défense sur laquelle on
+compte est le contrôle de valeur, section suivante.
 
 ### Isolation par import paresseux
 
@@ -277,6 +297,69 @@ budget, pour qu'un modèle qui dérape ne dépense pas en douce.
 | Circuit breaker | `loop.max_consecutive_blocked` tâches bloquées d'affilée |
 
 Aucun de ces arrêts ne clôt l'enquête : c'est un humain, via `inv done`, et lui seul.
+
+---
+
+## 7 bis. La vérification contraignante
+
+Le point le plus important de cette couche tient en une phrase : **on ne demande pas au
+modèle de se vérifier, on vérifie**.
+
+La distinction n'est pas théorique. Le projet `data-analyst-agent` a essayé d'ajouter à
+son prompt « si tu es loin de l'ordre de grandeur documenté, ta requête est fausse ».
+Mesure faite : même requête naïve, même résultat, aucune auto-correction en deux essais.
+La consigne a été retirée. Une consigne est indicative ; un contrôle est du code.
+
+### Deux objets à ne pas confondre
+
+| | `Task.sanity_check` | `Task.checks` |
+|---|---|---|
+| Nature | une phrase | des objets `Check` |
+| Destination | le prompt du sous-agent | le code, après exécution |
+| Porte sur | ce que le modèle devrait vérifier | le résultat **structuré** produit par l'outil |
+| Pouvoir | aucun | **bloque la tâche** |
+
+### Les quatre familles
+
+| Famille | Ce qu'elle vérifie | Utilisable en production ? |
+|---|---|---|
+| `magnitude` | la valeur tient dans un intervalle plausible | **Oui** — n'exige aucune réponse de référence |
+| `row_count` | le résultat a la taille attendue | Oui |
+| `columns` | les dimensions demandées sont présentes | Oui |
+| `expect_values` | des valeurs connues d'avance sont là | Non — réservé au banc de mesure |
+
+Seul `expect_values` demande de connaître la réponse. Les trois autres se dérivent du
+dictionnaire de la source ou de la forme attendue, donc protègent aussi une question
+inédite.
+
+### Trois issues, pas deux
+
+Un contrôle rend `réussi`, `échoué`, ou **`non vérifiable`** — ce dernier quand la
+grandeur contrainte n'est pas identifiable dans le résultat.
+
+« Je n'ai pas pu vérifier » n'est ni un succès ni un échec. Les confondre ment dans un
+sens (on accuse à tort) ou dans l'autre (on prétend une couverture qu'on n'a pas). Seul
+un contrôle **applicable et échoué** bloque ; les non vérifiables sont comptés à part.
+
+Cette nuance vient d'un vrai incident, décrit en D-9.
+
+### La porte
+
+`apply_gate` ([`engine/checks/verify.py`](../engine/checks/verify.py)) s'intercale entre
+l'exécution d'une tâche et son écriture dans le plan. Elle vit là, et non dans la
+boucle, pour que celle-ci reste sous 200 lignes — c'est une contrainte du cahier des
+charges, et elle est vérifiée par un test.
+
+Quatre propriétés en font une porte et non un ornement :
+
+1. l'état écrit dans `plan.md` est `blocked`, donc `next_runnable` ne débloque **aucune**
+   dépendante — un chiffre faux ne peut pas alimenter la suite ;
+2. le rapport est persisté avec la valeur produite et l'intervalle attendu : le plan dit
+   *pourquoi* ;
+3. une tâche non `done` ne transmet à la synthèse **que** son état et son motif d'échec,
+   jamais la prose que le modèle avait rédigée (voir D-8) ;
+4. `checks.binding: false` évalue et journalise sans rien arrêter — utile pour mesurer
+   ce que les contrôles attraperaient avant de les activer.
 
 ---
 
@@ -376,6 +459,29 @@ plutôt qu'un compteur de tentatives persisté, **parce que** la sémantique vou
 « une relance donne une chance à chaque tâche », pas « on abandonne définitivement ».
 *Limite* : le compteur de blocages consécutifs n'est pas cumulé entre deux relances.
 
+**D-8. Une tâche bloquée ne transmet pas sa prose à la synthèse.**
+Un résultat rejeté par un contrôle gardait son `summary`, et `render_logbook` le
+passait au prompt de synthèse : le chiffre écarté parce qu'il était faux **revenait par
+la bande**, où il redevenait citable. Options : ne rien changer (la synthèse est censée
+être prudente) ; nettoyer les nombres ; ne transmettre que l'état. Choix : **ne
+transmettre que l'état et le motif d'échec** plutôt que de compter sur la prudence du
+modèle, **parce que** c'est ce qui donne son sens à la porte — bloquer un chiffre puis
+le réinjecter ailleurs n'est pas bloquer. *Limite* : la synthèse perd le contexte de ce
+que le modèle avait cru trouver ; c'est voulu, ce contexte est précisément non fiable.
+
+**D-9. Un contrôle a trois issues, pas deux.**
+Constaté en mesure réelle : le repère « lignes en rupture ~1,1 % », sans colonne
+désignée, jugeait **tous** les nombres du résultat. La réponse juste en portait trois
+(3041 lignes, 1,08 %, 42 066 €) ; le contrôle a vu 3041, l'a comparé à `[0,5 ; 2,0]` et
+a **bloqué du travail correct**. C'est le pire mode de défaillance de ce dispositif : un
+contrôle qui refuse le juste apprend à ignorer les blocages.
+Options : durcir les bornes ; exiger un nom de colonne exact ; introduire une troisième
+issue. Choix : **un motif de colonne, et une issue `non vérifiable`** plutôt qu'un nom
+exact, **parce que** le modèle nomme ses colonnes librement (`taux`, `pct_rupture`,
+`part`) et qu'un contrôle qu'on ne peut pas appliquer ne doit ni accuser ni rassurer.
+*Limite* : un motif trop large rattraperait la mauvaise colonne ; le trou ne se rouvre
+pas pour autant, car une affirmation chiffrée sans **aucune** donnée reste bloquée.
+
 ---
 
 ## 10. Sécurité
@@ -412,3 +518,6 @@ tâche limite l'exposition mais ne l'annule pas.
 | Passage à l'échelle | Réécriture complète du plan à chaque commit | Convient jusqu'à quelques dizaines de tâches |
 | Artefacts visuels | Champ `chart` présent, toujours `null` | Voir [CADRAGE.md](CADRAGE.md#6-décisions) — le point dur est de décider qui produit le graphique |
 | Injection de prompt | Le contenu du corpus est supposé de confiance | Assainir ou encadrer les résultats d'outils si le corpus devient non maîtrisé |
+| Couverture des contrôles | Les bornes `magnitude` ne valent que ce que le dictionnaire documente — **5 questions sur 13** sur la base Maxizoo | Enrichir le dictionnaire ; c'est l'action la moins chère |
+| Mode de défaillance visé | `magnitude` protège contre « le chiffre est aberrant ». Mesuré : le mode dominant est « **la grandeur demandée est absente** » | Brancher `columns` / `row_count`, dérivables sans connaître la réponse |
+| Contrôle de grain | Analyse de forme au niveau regex : reconnaît la forme naïve, pas une réécriture équivalente | Le traiter comme un fil-piège, pas comme une garantie |

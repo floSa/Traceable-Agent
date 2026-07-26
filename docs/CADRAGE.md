@@ -41,6 +41,11 @@ synthèse qui distingue ce qui est établi de ce qui ne l'est pas.
   avant exécution, validation des résultats bruts avant synthèse.
 - Redémarrabilité prouvée : le process peut être tué en pleine boucle et relancé.
 - Une suite de tests qui tourne **sans aucun LLM**.
+- Une **vérification contraignante** des résultats : un contrôle est du code qui lit le
+  résultat structuré d'un outil, et une tâche qui échoue à son contrôle ne passe pas
+  `done`. Voir [ARCHITECTURE.md §7 bis](ARCHITECTURE.md).
+- Un **banc de mesure falsifiable** sur un jeu de 13 questions dont les réponses ont été
+  vérifiées hors de tout agent. Voir [EVALUATION.md](EVALUATION.md).
 
 **Hors périmètre (V1)**
 
@@ -48,7 +53,7 @@ synthèse qui distingue ce qui est établi de ce qui ne l'est pas.
   reste `null`. Le template HTML l'affiche déjà s'il est rempli. Ce n'est pas un oubli :
   voir la décision correspondante en section 6.
 - **Tout framework d'agents.** La boucle est écrite à la main, contrainte à rester
-  lisible d'un trait (183 lignes).
+  lisible d'un trait (185 lignes).
 - **L'exécution parallèle de tâches.** Une tâche à la fois, séquentiellement.
 - **Une interface web.** La sortie est une CLI, un fichier markdown et un rapport HTML
   statique.
@@ -91,6 +96,13 @@ Les hypothèses qui ne se lisent pas dans le code, avec ce qui les remettrait en
   a corrigé les briefs trop maigres. *Sa limite est aussi mesurée* : il n'a pas suffi à
   faire remplir un champ typé `dict` libre, ce qui a mené à la décision D-6 de
   [ARCHITECTURE.md](ARCHITECTURE.md#9-décisions-darchitecture).
+
+- **Un modèle ne se vérifie pas lui-même.** Ce n'est plus une hypothèse mais un constat
+  repris d'une mesure : ajouter au prompt une consigne de relecture d'ordre de grandeur
+  a été essayé sur ce jeu de données, et n'a rien changé — même requête naïve, aucune
+  auto-correction en deux essais. Toute vérification qui compte doit donc être du code.
+  *Ce qui la remettrait en cause* : un modèle nettement plus fort, sur lequel la consigne
+  prendrait. À re-tester avant de désactiver quoi que ce soit.
 
 - **Le corpus investigué est de confiance.** Son contenu remonte tel quel au modèle. Une
   injection de prompt via un fichier hostile n'est pas traitée.
@@ -139,6 +151,17 @@ Les hypothèses qui ne se lisent pas dans le code, avec ce qui les remettrait en
   `inv synthesize` lève si `inv approve` n'a pas été passé, et aucune commande ne met le
   statut à `done` en dehors de `inv done`.
 
+- **`sanity_check` ne décide de rien** : il reste une consigne rendue au prompt, parce
+  qu'elle est lisible et coûte zéro. Ce sont les `checks` d'une tâche qui bloquent,
+  **parce qu'**une consigne est indicative et un contrôle est exécutable.
+  *Contrepartie* : il faut écrire les contrôles, et ils ne couvrent que ce qu'on sait
+  formuler.
+
+- **Un contrôle a trois issues** : réussi, échoué, **non vérifiable**. Confondre la
+  troisième avec l'une des deux autres ment — soit on accuse à tort, soit on prétend une
+  couverture qu'on n'a pas. Cette décision vient d'un incident réel où un contrôle a
+  bloqué une réponse juste.
+
 - **Les artefacts sont write-only** : la trace d'un appel d'outil (la commande, le SQL)
   part sur disque et n'est jamais relue par un modèle. **Parce que** son rôle est de
   permettre à un humain de rejouer ou de contester, pas d'enrichir un prompt.
@@ -180,20 +203,34 @@ verts avant de passer à la suivante.
 5. `synthesize.py` + `reporter.py` + `cli.py`
 6. `toolpacks/sql.py` **en dernier**, pour prouver qu'il se branche sans toucher au moteur
 
+### Fait depuis (branche `investigation-maxizoo`)
+
+Le pack `sql` a été confronté à un vrai LLM sur une vraie base — ce qui était le point 2
+de la suite envisagée. Trois étapes livrées et testées :
+
+| Étape | Contenu | Mesuré |
+|---|---|---|
+| 0 | Banc de mesure : vérificateur chiffré, lecture des 13 questions, trois compteurs | Ligne de base établie |
+| 1 | Périmètre par tâche : dictionnaire injecté avant la question, contrôle de grain | **Gain réel** : `faux` de 9 à 6 |
+| 2 | Vérification contraignante : la porte entre exécution et écriture | Non concluant à n=1 |
+
+Détail et réserves : [EVALUATION.md](EVALUATION.md).
+
 ### Suite envisagée
 
 | Priorité | Sujet | Pourquoi |
 |---|---|---|
-| 1 | Éprouver le rôle 1 en mode conversationnel sur le vrai modèle | Seul chemin de code non validé en réel (tous les runs ont utilisé `--yes`) |
-| 2 | Une investigation `sql` de bout en bout avec un vrai modèle | La généricité n'est prouvée que par les tests, pas encore face à un LLM |
-| 3 | Tester avec un modèle plus gros | Seul levier réel sur le taux de blocage |
-| 4 | Trancher les artefacts visuels | Voir section 6 |
+| 1 | Brancher les contrôles `columns` / `row_count` | Mesuré : le mode de défaillance dominant est « la grandeur demandée est absente », pas « le chiffre est absurde » |
+| 2 | 3 exécutions par configuration, `temperature: 0` | 4 questions sur 13 changent de verdict entre exécutions identiques ; sans ça, aucun chiffre ne conclut |
+| 3 | Éprouver le rôle 1 en mode conversationnel sur le vrai modèle | Seul chemin de code non validé en réel (tous les runs ont utilisé `--yes`) |
+| 4 | Tester avec un modèle plus gros | Seul levier réel sur le taux de blocage |
+| 5 | Trancher les artefacts visuels | Voir section 6 |
 
 ---
 
 ## 8. Stratégie de tests
 
-**171 tests, aucun appel de modèle.** `FakeProvider` rend du JSON scripté et hérite du
+**254 tests, aucun appel de modèle.** `FakeProvider` rend du JSON scripté et hérite du
 même mécanisme de retry que le vrai provider : tester la boucle sans LLM teste aussi ce
 qui rend un petit modèle exploitable.
 
@@ -209,6 +246,10 @@ qui rend un petit modèle exploitable.
 | [`test_synthesize_report.py`](../tests/test_synthesize_report.py) | 18 | Gate humaine, snapshots immuables, garde-fous du rôle 1 |
 | [`test_cli.py`](../tests/test_cli.py) | 12 | Parcours complet, gates non contournables |
 | [`test_crash_recovery.py`](../tests/test_crash_recovery.py) | 5 | `SIGKILL` sur un vrai sous-process, reprise au bon endroit |
+| [`test_checks_values.py`](../tests/test_checks_values.py) | 28 | Le vérificateur chiffré, et surtout ce qu'il doit **rejeter** |
+| [`test_reference_questions.py`](../tests/test_reference_questions.py) | 19 | Lecture des 13 questions, refus bruyants, choix des valeurs de contrôle |
+| [`test_toolpack_sql_grain.py`](../tests/test_toolpack_sql_grain.py) | 17 | Dictionnaire, grain, agrégation préalable — et le refus d'une requête correcte |
+| [`test_q5_grain.py`](../tests/test_q5_grain.py) | 19 | La thèse entière : le chiffre faux n'atteint ni le plan, ni les dépendantes, ni la synthèse |
 
 Trois tests méritent d'être signalés parce qu'ils vérifient une **propriété de
 conception**, pas un comportement :

@@ -14,6 +14,8 @@
 - [Documentation](#documentation)
 - [Démarrage](#démarrage)
 - [Exemple de bout en bout](#exemple-de-bout-en-bout)
+- [La vérification contraignante](#la-vérification-contraignante)
+- [Mesurer le moteur](#mesurer-le-moteur)
 - [Configuration](#configuration)
 - [Commandes](#commandes)
 - [Ce que gemma4:e4b a imposé](#ce-que-gemma4e4b-a-imposé-mesuré-pas-supposé)
@@ -72,7 +74,8 @@ summarize. You do not comment on other tasks. »*
 | Document | Contenu |
 |---|---|
 | [docs/CADRAGE.md](docs/CADRAGE.md) | Le **pourquoi** : objectifs, périmètre, hypothèses, décisions, stratégie de tests |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Le **comment** : composants, flux, persistance, `ToolPack`, sécurité |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Le **comment** : composants, flux, persistance, `ToolPack`, vérification, sécurité |
+| [docs/EVALUATION.md](docs/EVALUATION.md) | Le **banc de mesure** : protocole, résultats, et ce qu'ils ne prouvent pas |
 | [investigations/README.md](investigations/README.md) | Le registre des enquêtes menées |
 
 ## Démarrage
@@ -181,6 +184,69 @@ liste explicitement ce qui **n'a pas** été établi :
 Une tâche bloquée reste visible partout — dans le plan, dans le rapport, dans les
 *caveats* de la synthèse. Le système ne masque jamais ce qu'il n'a pas su faire.
 
+## La vérification contraignante
+
+Le point le plus important de ce moteur tient en une phrase : **on ne demande pas au
+modèle de se vérifier, on vérifie**.
+
+Ce n'est pas une posture. Sur ce jeu de données, ajouter au prompt « si tu es loin de
+l'ordre de grandeur documenté, ta requête est fausse » a été essayé et **n'a rien
+changé** : même requête naïve, aucune auto-correction en deux essais.
+
+D'où deux objets distincts sur une tâche :
+
+| | `sanity_check` | `checks` |
+|---|---|---|
+| Nature | une phrase | des objets `Check` |
+| Va où | dans le prompt | dans le code, après exécution |
+| Porte sur | ce que le modèle devrait vérifier | le résultat **structuré** rendu par l'outil |
+| Pouvoir | aucun | **bloque la tâche** |
+
+Une tâche dont un contrôle échoue passe `blocked` : elle ne débloque aucune dépendante,
+et la synthèse ne reçoit que son motif d'échec — jamais la prose que le modèle avait
+rédigée. Bloquer un chiffre puis le réinjecter ailleurs ne serait pas bloquer.
+
+Un contrôle a **trois issues**, pas deux : réussi, échoué, ou **non vérifiable** quand
+la grandeur contrainte n'est pas identifiable dans le résultat. Confondre la troisième
+avec l'une des deux autres ment — soit on accuse à tort, soit on prétend une couverture
+qu'on n'a pas.
+
+> Détails : [docs/ARCHITECTURE.md §7 bis](docs/ARCHITECTURE.md)
+
+## Mesurer le moteur
+
+Le dépôt embarque un banc de mesure falsifiable : **13 questions** sur une base retail de
+**1 659 181 lignes**, dont les réponses ont été vérifiées en exécutant le SQL hors de
+tout agent.
+
+```bash
+uv run python -m harness.battery --target agent --scope --checks
+```
+
+Il rend **trois compteurs**, jamais un seul :
+
+| Compteur | Sens |
+|---|---|
+| `juste` | la réponse porte les valeurs de référence |
+| `bloqué` | la tâche s'est arrêtée, et l'a dit |
+| **`faux`** | la réponse a l'air d'une réponse, et ses chiffres sont faux |
+
+**`faux` est la métrique à conduire à zéro.** « Je n'ai pas su » est une réponse
+acceptable ; « voici un chiffre inventé » ne l'est pas.
+
+Résultat mesuré, à lire avec ses réserves :
+
+| Configuration | juste | bloqué | faux |
+|---|---|---|---|
+| Moteur nu | 3 | 1 | **9** |
+| + périmètre + dictionnaire | 5 | 2 | **6** |
+
+Le gain du dictionnaire et du périmètre tient sur trois exécutions indépendantes.
+L'apport des contrôles, lui, **n'est pas concluant à une exécution par configuration** :
+quatre questions sur treize changent de verdict entre exécutions quasi identiques.
+
+> Protocole complet, résultats détaillés et limites : [docs/EVALUATION.md](docs/EVALUATION.md)
+
 ## Configuration
 
 Deux fichiers. Les secrets et l'adressage machine vont dans `.env`, interpolés dans
@@ -211,10 +277,12 @@ est visible dans [`config.yml`](config.yml)**, jamais enfoui dans le code.
 | `agent` | `max_tool_calls` | `10` | Tours d'outils par tâche. Défaut du moteur : 5 |
 | `agent` | `max_tokens` | `20000` | Budget d'une tâche entière |
 | `agent` | `max_tokens_per_call` | `4096` | Plafond d'un seul appel |
+| `checks` | `binding` | `true` | Une tâche dont un contrôle échoue passe `blocked`. À `false`, les contrôles sont évalués et journalisés sans rien arrêter |
 | `loop` | `max_consecutive_blocked` | `2` | Circuit breaker |
 | `loop` | `retry_blocked` | `false` | Rejouer les tâches bloquées |
 | `toolpack` | `default` | `files` | Pack utilisé par `inv new` sans `--toolpack` |
 | `toolpack.files` | `root` | `./corpus` | Racine du corpus investigué |
+| `toolpack.sql` | `dictionary` | `./data/maxizoo_dictionnaire.md` | Le sens des données et les ordres de grandeur, injectés **avant** la question |
 | `toolpack.sql` | `default_limit` | `1000` | `LIMIT` injecté si la requête n'en a pas |
 
 ## Commandes
@@ -276,7 +344,7 @@ ajoutée après un échec observé.
 uv run pytest
 ```
 
-**171 tests, sans aucun LLM.** `FakeProvider` rend du JSON scripté et hérite du même
+**254 tests, sans aucun LLM.** `FakeProvider` rend du JSON scripté et hérite du même
 mécanisme de retry que le vrai provider : tester la boucle sans modèle teste aussi ce qui
 rend un petit modèle exploitable.
 
@@ -289,6 +357,8 @@ rend un petit modèle exploitable.
 | `validate` refuse, l'outil n'est pas exécuté | `test_un_refus_de_validate_n_execute_pas_l_outil` |
 | `build_context` sans le logbook complet | `test_build_context_ne_contient_jamais_le_logbook_complet` |
 | `files` tourne sans importer duckdb | `test_le_moteur_tourne_sur_files_sans_importer_duckdb` |
+| Un chiffre faux n'atteint ni le plan, ni les dépendantes, ni la synthèse | `test_de_bout_en_bout_le_chiffre_faux_ne_circule_jamais` |
+| Un contrôle ne bloque jamais une réponse juste | `test_un_repere_en_pourcentage_ne_juge_pas_les_comptages` |
 | La boucle ne contient aucun appel LLM (vérifié sur l'AST) | `test_la_boucle_ne_contient_aucun_appel_llm` |
 
 > Détail par fichier : [docs/CADRAGE.md](docs/CADRAGE.md#8-stratégie-de-tests)
@@ -309,8 +379,13 @@ test_2/
 │   ├── synthesize.py       # rôle 4
 │   ├── reporter.py         # rôle 5 — Jinja2
 │   ├── cli.py              # la CLI inv, les deux gates humaines
+│   ├── checks/             # values.py (vérification chiffrée), verify.py (la porte)
 │   ├── toolpacks/          # base.py, files.py, sql.py — le seul point de variation
 │   └── templates/          # plan.md.j2, report.html.j2
+├── harness/                # le banc de mesure, HORS moteur — engine/ ne l'importe jamais
+│   ├── load_base.py        # construit la base, refuse d'écrire si un volume dérive
+│   ├── reference_questions.py
+│   └── battery.py
 ├── investigations/
 │   ├── README.md           # le registre
 │   └── <date>_<slug>/
@@ -318,7 +393,8 @@ test_2/
 │       ├── artifacts/      # traces write-only, jamais relues par un LLM
 │       └── results/        # snapshots datés immuables
 ├── corpus/                 # le corpus de démonstration
-├── docs/                   # CADRAGE.md (pourquoi) + ARCHITECTURE.md (comment)
+├── docs/                   # CADRAGE (pourquoi), ARCHITECTURE (comment), EVALUATION (mesure)
+├── data/                   # base et export Maxizoo — gitignoré, ~236 Mo
 ├── tests/
 ├── config.yml              # les six paramètres explicites
 └── .env.example
@@ -342,6 +418,15 @@ test_2/
 - **Le compteur de blocages consécutifs** est propre au run courant, pas cumulé entre
   deux relances.
 - **`artifacts/` n'est jamais purgé.**
+- **Les contrôles ne couvrent que 5 questions sur 13** sur la base de démonstration :
+  celles dont le dictionnaire documente un ordre de grandeur. C'est une limite du
+  dictionnaire, pas du mécanisme.
+- **Le mode de défaillance dominant n'est pas celui que les contrôles visent.** Mesuré :
+  l'agent ne produit pas des nombres aberrants, il ne produit **pas la grandeur
+  demandée** — il répond à une question voisine. Ce sont les contrôles de forme
+  (`columns`, `row_count`) qui adresseraient ça, et ils ne sont pas encore branchés.
+- **La variance domine les mesures à une exécution.** Toute comparaison sérieuse demande
+  3 à 5 exécutions par configuration.
 - **Les artefacts visuels sont hors périmètre** : le champ `chart` existe et reste
   `null`. Voir [docs/CADRAGE.md](docs/CADRAGE.md#6-décisions) pour le point à trancher.
 
