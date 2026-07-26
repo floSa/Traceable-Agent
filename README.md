@@ -1,40 +1,97 @@
-# investigator — moteur d'investigation par tâches atomiques
+# investigator
 
-Vous posez une question complexe. Le système la découpe en tâches simples,
-écrites dans un fichier markdown. Puis une boucle les exécute **une par une** :
-pour chaque tâche, un appel LLM avec un **contexte vierge**, qui ne reçoit que
-cette tâche, rend son résultat, et disparaît.
+**Moteur d'investigation qui répond à une question complexe en la décomposant en tâches atomiques, exécutées une par une dans un contexte LLM vierge, avec un fichier markdown pour seule mémoire.**
 
-**Le fichier markdown est la seule mémoire du système.** Aucun état ne survit
-dans le contexte d'un LLM entre deux tâches. Conséquence directe : le moteur est
-redémarrable par construction — on peut le tuer en plein vol, `inv run` reprend
-à la première tâche `pending`.
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-2.13-E92063?logo=pydantic&logoColor=white)
+![Typer](https://img.shields.io/badge/Typer-0.27-0B7285)
+![Ollama](https://img.shields.io/badge/Ollama-gemma4:e4b-000000?logo=ollama&logoColor=white)
 
-Deux points de contrôle humain sont obligatoires et non contournables :
-la liste de tâches avant exécution, les résultats bruts avant synthèse.
+## Sommaire
 
+- [Architecture](#architecture)
+- [Documentation](#documentation)
+- [Démarrage](#démarrage)
+- [Exemple de bout en bout](#exemple-de-bout-en-bout)
+- [Configuration](#configuration)
+- [Commandes](#commandes)
+- [Ce que gemma4:e4b a imposé](#ce-que-gemma4e4b-a-imposé-mesuré-pas-supposé)
+- [Tests](#tests)
+- [Structure du projet](#structure-du-projet)
+- [Limites connues](#limites-connues)
+- [Licences & composants](#licences--composants)
+
+## Architecture
+
+Vous posez une question complexe. Le système la découpe en tâches simples, écrites dans
+un fichier markdown. Puis une boucle les exécute **une par une** : pour chaque tâche, un
+appel LLM avec un **contexte vierge**, qui ne reçoit que cette tâche, rend son résultat,
+et disparaît.
+
+**Le fichier markdown est la seule mémoire du système.** Aucun état ne survit dans le
+contexte d'un LLM entre deux tâches. Conséquence directe : le moteur est redémarrable par
+construction — on peut le tuer en plein vol, `inv run` reprend à la première tâche
+`pending`.
+
+Deux points de contrôle humain sont obligatoires et **non contournables** : la liste de
+tâches avant exécution, les résultats bruts avant synthèse.
+
+```mermaid
+flowchart LR
+  q[Question] --> brief[role 1 brief_builder LLM]
+  brief -->|statut ready| g1{{GATE 1 humaine}}
+  g1 --> loop[role 2 boucle AUCUN LLM]
+  loop --> agent[role 3 sous-agent LLM<br/>contexte vierge]
+  agent --> loop
+  loop -->|statut awaiting_review| g2{{GATE 2 humaine}}
+  g2 --> synth[role 4 synthese LLM]
+  synth --> rep[role 5 rapport Jinja2]
+  rep --> done[inv done]
+
+  loop <-.->|seule memoire| plan[(plan.md)]
+  agent -.->|traces write-only| art[(artifacts/)]
+  synth -.->|snapshots immuables| res[(results/)]
 ```
-inv new ──▶ GATE 1 ──▶ inv run ──▶ GATE 2 ──▶ inv synthesize ──▶ inv report ──▶ inv done
-  LLM      humain      boucle      humain          LLM             Jinja2       humain
-                    (0 appel LLM)                                (0 appel LLM)
-```
 
----
+| Rôle | Appelle un LLM ? | Ce qu'il fait |
+|---|---|---|
+| 1. `brief_builder` | Oui | Conversationnel, **une question à la fois**, produit la liste de tâches en JSON |
+| 2. `loop` | **Non** | Relit le plan, prend la première tâche exécutable, commit, vérifie les arrêts |
+| 3. `agent` | Oui | Une tâche, un contexte vierge, boucle d'outils bornée |
+| 4. `synthesize` | Oui, une fois | Relit le logbook du disque, snapshot daté immuable |
+| 5. `reporter` | **Non** | Jinja2 vers HTML |
 
-## Installation
+Le system prompt du sous-agent est littéral : *« You execute exactly one task. You do not
+summarize. You do not comment on other tasks. »*
 
-Python 3.12, `uv`. Aucune base de données requise pour la démo.
+> Détails : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+## Documentation
+
+| Document | Contenu |
+|---|---|
+| [docs/CADRAGE.md](docs/CADRAGE.md) | Le **pourquoi** : objectifs, périmètre, hypothèses, décisions, stratégie de tests |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Le **comment** : composants, flux, persistance, `ToolPack`, sécurité |
+| [investigations/README.md](investigations/README.md) | Le registre des enquêtes menées |
+
+## Démarrage
+
+**Prérequis** : Python 3.12 et `uv`. Aucune base de données requise pour la démo.
 
 ```bash
 uv sync
+```
+
+```bash
 cp .env.example .env
 ```
 
 ### Le modèle : service LLM central, pas d'Ollama local
 
-Ce projet **ne lance pas son propre Ollama**. Il tape le service mutualisé
+Ce projet **ne lance pas son propre Ollama**. Il consomme le service mutualisé
 `~/mes_projets/llm-service` (conteneur `ollama-central`), qui expose un endpoint
-OpenAI-compatible. C'est le cas « app `uv` locale » de
+OpenAI-compatible. C'est le cas « application `uv` locale » du guide
 `llm-service/docs/brancher-un-projet.md`.
 
 ```bash
@@ -45,75 +102,64 @@ cd ~/mes_projets/llm-service && make up
 cd ~/mes_projets/llm-service && make models
 ```
 
-Puis dans le `.env` de ce projet :
+| Accès | URL | Note |
+|---|---|---|
+| Endpoint LLM (hôte) | `http://localhost:11434/v1` | Valeur par défaut du `.env` |
+| Endpoint LLM (réseau `llm-net`) | `http://ollama-central:11434/v1` | Si ce projet est un jour conteneurisé |
+| Rapport HTML | `investigations/<date>_<slug>/results/*_report.html` | Fichier local, à ouvrir dans un navigateur |
 
-```bash
-INV_LLM_BASE_URL=http://localhost:11434/v1
-INV_LLM_MODEL=gemma4:e4b
-```
+## Exemple de bout en bout
 
-Si ce projet est un jour conteneurisé et attaché au réseau `llm-net`, seule l'URL
-change : `http://ollama-central:11434/v1`.
+Le dépôt contient un corpus de démonstration dans `corpus/` : six notes markdown sur une
+hausse de churn (comité produit, post-mortem de migration, entretiens de sortie, support,
+veille concurrentielle, tickets critiques).
 
----
-
-## Exemple de bout en bout (pack `files`, zéro base de données)
-
-Le dépôt contient un corpus de démonstration dans `corpus/` : six notes markdown
-sur une hausse de churn (comité produit, post-mortem de migration, entretiens de
-sortie, support, veille concurrentielle, tickets critiques).
+**1. Construire le brief** — le rôle 1 découpe par hypothèse, chaque tâche avec son
+périmètre de fichiers. Le plan sort en statut `ready` : rien ne s'exécute encore.
 
 ```bash
 uv run inv new "Pourquoi le churn des clients Entreprise a-t-il augmente au premier semestre 2026 ?" --yes
 ```
 
-Le rôle `brief_builder` produit une liste de tâches — découpée **par hypothèse**,
-chacune avec son périmètre de fichiers. Le plan est en statut `ready` : rien ne
-s'exécute encore.
-
-**GATE 1** — vous relisez, et vous éditez si besoin :
+**2. GATE 1** — vous relisez et amendez. `--edit` ouvre `plan.md` dans `$EDITOR` ; le
+frontmatter YAML est la source de vérité, donc vous pouvez y supprimer une tâche hors
+sujet, resserrer un périmètre, réordonner. À la fermeture, le fichier est **revalidé
+intégralement** : une dépendance vers une tâche inexistante est refusée immédiatement,
+pas trois tâches plus tard.
 
 ```bash
-uv run inv tasks <slug> --edit
+uv run inv tasks pourquoi-le-churn-des-clients-entreprise --edit
 ```
 
-`--edit` ouvre `plan.md` dans `$EDITOR`. Le frontmatter YAML est la source de
-vérité : vous pouvez y supprimer une tâche hors sujet, resserrer un périmètre,
-réordonner. À la fermeture, le fichier est **revalidé intégralement** — une
-édition incohérente (dépendance vers une tâche inexistante, id dupliqué) est
-refusée immédiatement, pas trois tâches plus tard.
+**3. Lancer la boucle.**
 
 ```bash
-uv run inv run <slug>
+uv run inv run pourquoi-le-churn-des-clients-entreprise
 ```
 
-```bash
-uv run inv status <slug>
-```
-
-**GATE 2** — les résultats bruts, avant toute synthèse :
+**4. GATE 2** — les résultats bruts, avant toute synthèse. Sans `approve`, `synthesize`
+refuse de tourner : c'est une vérification de code, pas une convention.
 
 ```bash
-uv run inv review <slug>
+uv run inv review pourquoi-le-churn-des-clients-entreprise
 ```
 
 ```bash
-uv run inv approve <slug> --note "pourquoi vous validez"
+uv run inv approve pourquoi-le-churn-des-clients-entreprise --note "findings partielles assumees"
 ```
 
-Sans `approve`, `synthesize` refuse de tourner. C'est une vérification de code,
-pas une convention.
+**5. Synthétiser, rapporter, clore.**
 
 ```bash
-uv run inv synthesize <slug>
-```
-
-```bash
-uv run inv report <slug>
+uv run inv synthesize pourquoi-le-churn-des-clients-entreprise
 ```
 
 ```bash
-uv run inv done <slug>
+uv run inv report pourquoi-le-churn-des-clients-entreprise
+```
+
+```bash
+uv run inv done pourquoi-le-churn-des-clients-entreprise
 ```
 
 ### Ce que ça donne réellement
@@ -125,268 +171,104 @@ Extrait d'un run réel sur ce corpus avec `gemma4:e4b`, chiffres non maquillés 
   done · 2 outil(s) · 4585 tokens · 28.3s
 ```
 
-La finding correspondante cite de vrais numéros de tickets du corpus. Et la
-synthèse liste explicitement ce qui **n'a pas** été établi :
+La finding correspondante cite de vrais numéros de tickets du corpus. Et la synthèse
+liste explicitement ce qui **n'a pas** été établi :
 
 > **Non établi**
 > · L'impact concurrentiel n'a pu être évalué faute d'informations (t3).
 > · Les tentatives d'identifier les problèmes récurrents (t1) ont échoué.
 
-Une tâche bloquée reste visible partout — dans le plan, dans le rapport, dans
-les *caveats* de la synthèse. Le système ne masque jamais ce qu'il n'a pas su
-faire.
+Une tâche bloquée reste visible partout — dans le plan, dans le rapport, dans les
+*caveats* de la synthèse. Le système ne masque jamais ce qu'il n'a pas su faire.
 
----
+## Configuration
 
-## Ce qui est générique, et ce qui ne l'est pas
+Deux fichiers. Les secrets et l'adressage machine vont dans `.env`, interpolés dans
+`config.yml` par `${VAR:-défaut}`. **Tout paramètre qui change le comportement du moteur
+est visible dans [`config.yml`](config.yml)**, jamais enfoui dans le code.
 
-Le moteur ne connaît **aucun domaine métier**. La seule chose qui varie d'un
-usage à l'autre est le `ToolPack` :
+### `.env`
 
-```python
-class ToolPack(Protocol):
-    name: str
-    def describe(self) -> str                     # injecté au prompt
-    def tools(self) -> list[ToolSpec]             # nom, schéma, doc
-    def call(self, name, args) -> ToolResult
-    def validate(self, name, args) -> Ok | Refus  # AVANT toute exécution
-    def artifact(self, name, args, res) -> str | None   # trace auditable
-```
+| Variable | Défaut | Effet |
+|---|---|---|
+| `INV_LLM_BASE_URL` | `http://localhost:11434/v1` | Endpoint OpenAI-compatible du service central |
+| `INV_LLM_MODEL` | `gemma4:e4b` | Modèle servi ; défaut universel du parc |
+| `INV_LLM_API_KEY` | `ollama` | Ollama ignore la valeur, mais l'en-tête `Authorization` doit exister |
 
-`validate` est appelé avant chaque exécution et peut refuser. `artifact` rend le
-contenu écrit sur disque en trace auditable — le SQL exact, la commande shell
-équivalente. **Ces traces ne sont jamais relues par un LLM** : elles servent à un
-humain qui veut rejouer ou contester un résultat.
+### `config.yml`
 
-Deux packs sont livrés :
-
-| pack | outils | périmètre (`task.scope`) | dépendances |
+| Section | Paramètre | Défaut livré | Effet |
 |---|---|---|---|
-| `files` | `grep`, `read`, `list` | `{"globs": [...]}` | aucune |
-| `sql` | `schema`, `query` | `{"tables": [...]}` | `duckdb` |
+| `llm` | `structured_output` | `auto` | Tente `json_schema`, retombe sur le schéma injecté dans le prompt |
+| `llm` | `max_validation_retries` | `3` | Retry à feedback sur erreur Pydantic. Ne pas descendre sous 3 |
+| `llm` | `count_reasoning_tokens` | `true` | Ré-estime les tokens de raisonnement, non comptés par l'API |
+| `llm` | `final_directive` | `true` | Ligne impérative finale ; sans elle, un modèle à raisonnement rend un contenu vide |
+| `context` | `max_chars` | `4000` | Plafond du contexte passé au sous-agent |
+| `context` | `include_dependencies` | `true` | Remonte l'`insight` des tâches de `depends_on` |
+| `context` | `max_dependencies` | `10` | Nombre de dépendances remontées |
+| `stop` | `strategy` | `none` | `none`, `llm` ou `callable` — évaluation du critère d'arrêt |
+| `stop` | `callable` | `null` | `"mon_module:ma_fonction"` si `strategy: callable` |
+| `agent` | `max_tool_calls` | `10` | Tours d'outils par tâche. Défaut du moteur : 5 |
+| `agent` | `max_tokens` | `20000` | Budget d'une tâche entière |
+| `agent` | `max_tokens_per_call` | `4096` | Plafond d'un seul appel |
+| `loop` | `max_consecutive_blocked` | `2` | Circuit breaker |
+| `loop` | `retry_blocked` | `false` | Rejouer les tâches bloquées |
+| `toolpack` | `default` | `files` | Pack utilisé par `inv new` sans `--toolpack` |
+| `toolpack.files` | `root` | `./corpus` | Racine du corpus investigué |
+| `toolpack.sql` | `default_limit` | `1000` | `LIMIT` injecté si la requête n'en a pas |
 
-`SqlToolPack.validate` refuse tout ce qui n'est pas `SELECT`/`WITH`, refuse les
-tables non déclarées dans la tâche, refuse les fonctions qui liraient des
-fichiers hors base (`read_csv`…), passe un `EXPLAIN` avant d'exécuter, et injecte
-un `LIMIT`.
+## Commandes
 
-Le pack `sql` se branche **sans qu'une ligne du moteur ne change**, et lancer le
-moteur sur `files` ne charge pas une ligne de code SQL :
+| Commande | Rôle |
+|---|---|
+| `inv new "<question>" [--toolpack files] [--yes]` | Rôle 1 — construit la liste de tâches, statut `ready` |
+| `inv tasks <slug> [--edit]` | **GATE 1** — affiche et permet d'éditer avant exécution |
+| `inv run <slug> [--retry-blocked]` | Rôle 2 — la boucle |
+| `inv step <slug>` | Une seule tâche, pour déboguer un prompt ou un toolpack |
+| `inv status <slug>` | Tâches, budget, évaluations du critère d'arrêt |
+| `inv review <slug>` | **GATE 2** — les findings brutes |
+| `inv approve <slug> [--note]` | **GATE 2** — validation humaine explicite |
+| `inv synthesize <slug>` | Rôle 4 — refuse sans `approve` |
+| `inv report <slug>` | Rôle 5 — HTML, aucun LLM |
+| `inv done <slug>` | Seule commande qui met le statut à `done` |
+| `inv kill <slug> --reason "<...>"` | Abandonne l'enquête en gardant la trace du pourquoi |
+| `inv list` | Toutes les investigations connues |
 
-```python
-def test_le_moteur_tourne_sur_files_sans_importer_duckdb():
-    # dans un process neuf, après une investigation complète sur `files` :
-    assert [m for m in sys.modules if "duckdb" in m] == []
-```
+### Le pack `sql`
 
-Pour utiliser le pack sql :
+Le pack `sql` se branche **sans qu'une ligne du moteur ne change**, et lancer le moteur
+sur `files` ne charge pas une ligne de code SQL.
 
 ```bash
 uv sync --extra sql
 ```
 
----
+## Ce que gemma4:e4b a imposé (mesuré, pas supposé)
 
-## Les six trous, rendus explicites
+Trois comportements constatés en run réel ont changé le code. Ils sont documentés parce
+qu'ils se reproduiront avec **tout modèle à raisonnement**.
 
-Le pattern d'origine ne documente pas ces points. Chacun est un **paramètre
-visible dans `config.yml`**, jamais une constante enfouie.
+**1. Les tokens de raisonnement ne sont pas comptés** dans `usage.completion_tokens`.
+Sans correction, le budget mentait d'un facteur ~4.
+→ `llm.count_reasoning_tokens` les ré-estime.
 
-### 1. Contexte passé au sous-agent
+**2. Le modèle « pense » et renvoie un contenu vide** — mesuré : `finish_reason: stop`,
+746 caractères de raisonnement, 0 de contenu. Une dernière ligne impérative dans le
+prompt le ramène à émettre le JSON ; un prefill assistant, non.
+→ `llm.final_directive`. Sans effet sur un modèle qui n'en a pas besoin.
 
-`engine/context.py` — `build_context(plan, task) -> str` est une **fonction
-pure** : ni disque, ni réseau, ni horloge. Elle assemble, et rien d'autre :
+**3. Un `dict` libre dans un schéma ne se remplit pas.** Le champ `scope` d'une tâche
+était un objet libre : `{"type": "object"}` dans le JSON Schema ne dit rien de ce qui est
+attendu, et le modèle rendait `{}` sur **9 tâches sur 9**, même après trois retries à
+feedback. La correction n'est pas un meilleur prompt : **c'est le pack qui déclare un
+modèle typé** (`ToolPack.scope_model()`), et l'information est alors portée par la
+génération elle-même.
 
-1. la question globale, réduite à une phrase ;
-2. les `watch_outs` ;
-3. pour chaque tâche de `depends_on`, **uniquement son `insight`**.
-
-Jamais le logbook complet, jamais les `summary`, jamais les artefacts, jamais les
-autres tâches. C'est vérifié par un test qui plante un `summary` marqué
-CONFIDENTIEL dans le logbook et exige qu'il ne fuite pas.
-
-Réglages : `context.max_chars`, `context.include_dependencies`,
-`context.include_watch_outs`, `context.include_question`,
-`context.max_dependencies`.
-
-### 2. Évaluation du critère d'arrêt
-
-`stop.strategy` :
-
-- `none` — jamais évalué (défaut du POC) ;
-- `llm` — un appel dédié minimal : le critère + les insights accumulés, sortie
-  `{fired, reason}`. Il vit dans `agent.py`, pas dans `loop.py`, pour que
-  l'orchestrateur reste sans le moindre appel de modèle ;
-- `callable` — votre fonction Python, `"mon_module:ma_fonction"`.
-
-**L'évaluation est journalisée systématiquement** dans `logbook.stop_log`, y
-compris en `none` : le plan porte alors la trace explicite que le critère n'a
-jamais été évalué. Un critère `callable` qui lève une exception ne casse pas
-l'enquête — il est journalisé comme non concluant.
-
-### 3. Écriture dans le fichier
-
-Le LLM n'écrit **jamais** de markdown. Il rend du JSON validé par Pydantic.
-`plan.commit(result)` relit le fichier, parse, modifie l'objet, **revalide le
-schéma entier**, réécrit.
-
-L'écriture est atomique (fichier temporaire + `os.replace` + `fsync` du
-répertoire) et prise sous verrou `flock`. `commit` écrit le finding, l'état de la
-tâche et la ligne de run_log **dans la même transaction** — sinon un kill entre
-les deux laisse une tâche `done` sans tokens comptés. C'est un vrai bug, attrapé
-par le test de crash.
-
-Format retenu : le **frontmatter YAML est la source de vérité**, le corps
-markdown est une vue régénérée à chaque écriture (Jinja2) et jamais parsée. Le
-round-trip est donc sans perte, et un humain peut éditer le YAML à la main.
-
-### 4. Budget d'itération du sous-agent
-
-`agent.max_tool_calls`, `agent.max_tokens`, `agent.max_tokens_per_call`.
-Dépassement → tâche marquée `blocked` avec sa raison. **Jamais de crash** : un
-provider injoignable, un modèle qui ne produit pas de JSON exploitable, un budget
-épuisé — tout se solde par un `blocked` documenté.
-
-Les tokens brûlés par des tentatives ratées sont **quand même imputés** au
-budget : un modèle qui dérape ne dépense pas en douce.
-
-> Le défaut du moteur est 5 appels d'outils (`engine/config.py`). Le `config.yml`
-> livré monte à **10**, mesuré nécessaire avec `gemma4:e4b` sur des tâches à
-> périmètre multi-fichiers. Avec un modèle plus synthétique, redescendez : c'est
-> un coût direct en tokens.
-
-### 5. Artefacts visuels — hors périmètre
-
-Le champ `logbook.findings[].chart` existe dans le schéma et **reste `null`**.
-Un test l'affirme. Le template HTML l'affiche déjà s'il est rempli.
-
-Pour l'implémenter plus tard sans toucher au moteur : faire retourner à
-`ToolPack.artifact()` un chemin d'image en plus de la trace texte, et le poser
-dans `chart` au moment du commit. Le point dur n'est pas technique, c'est de
-décider **qui** produit le graphique — le sous-agent, qui devrait alors écrire du
-code, ou le pack, qui devrait alors connaître la sémantique des données. Tant que
-ce n'est pas tranché, le champ reste `null`.
-
-### 6. Reprise après échec
-
-`plan.md` étant la seule source de vérité et étant relu au début de **chaque**
-tour de boucle, le moteur est redémarrable par construction. Relancer `inv run`
-reprend à la première tâche `pending`. Une tâche `blocked` est ignorée par
-défaut, rejouable avec `--retry-blocked` — et une tâche n'est tentée qu'une fois
-par run, sans quoi une tâche qui rebloque se ferait rejouer en boucle.
-
-C'est prouvé, pas affirmé : `tests/test_crash_recovery.py` lance la boucle dans
-un vrai sous-process, le tue au `SIGKILL` en plein vol, vérifie que `plan.md` est
-toujours valide et cohérent, relance, et exige qu'aucune tâche ne soit rejouée.
-Un second test tue le process pendant une rafale de centaines de réécritures pour
-éprouver l'atomicité.
-
----
-
-## Les rôles
-
-| # | rôle | LLM ? | ce qu'il fait |
-|---|---|---|---|
-| 1 | `brief_builder` | oui | conversationnel, **une question à la fois**, produit la liste de tâches en JSON → statut `ready` |
-| 2 | `loop` | **non** | relit le plan, prend la première tâche exécutable, appelle l'agent, commit, vérifie les arrêts → `awaiting_review` |
-| 3 | `agent` | oui | une tâche, un contexte vierge, boucle d'outils bornée, rend un `TaskResult` |
-| 4 | `synthesize` | oui, une fois | relit le logbook du disque, snapshot daté **immuable** dans `results/` |
-| 5 | `reporter` | **non** | Jinja2 → HTML |
-
-Le system prompt du sous-agent est littéral :
-*« You execute exactly one task. You do not summarize. You do not comment on
-other tasks. »*
-
-Que la boucle ne contienne aucun appel de modèle n'est pas une intention, c'est
-un test : il parcourt l'AST de `loop.py` et refuse tout appel `.complete(...)`,
-tout import de client HTTP, toute constante de prompt. Un autre test exige
-qu'elle tienne sous 200 lignes.
-
-Le passage à `done` exige une commande humaine explicite (`inv done`). Ni la
-boucle, ni la synthèse, ni le rapport n'y touchent — un test le vérifie en
-enchaînant tout le parcours et en exigeant que le statut reste `awaiting_review`.
-
----
-
-## Couche modèle
-
-`engine/providers.py`. Contrat unique :
-
-```python
-provider.complete(system, user, schema, max_tokens) -> (instance_validée, Usage)
-```
-
-Sortie structurée : `response_format: json_schema` si le serveur l'accepte (c'est
-le cas du central), sinon bascule automatique sur le JSON Schema injecté dans le
-prompt.
-
-**Le retry à feedback est le cœur du dispositif.** Sur erreur de validation, on
-renvoie au modèle son erreur Pydantic exacte, pas un reset. Il est implémenté une
-seule fois, dans `BaseProvider`, donc `FakeProvider` l'exerce à l'identique :
-tester la boucle sans LLM teste aussi le mécanisme qui rend un petit modèle
-exploitable.
-
-`FakeProvider` rend du JSON scripté — toute la suite de tests tourne sans modèle.
-
-### Ce que `gemma4:e4b` a imposé (mesuré, pas supposé)
-
-Trois comportements constatés en run réel ont changé le code. Ils sont documentés
-parce qu'ils se reproduiront avec tout modèle à raisonnement :
-
-1. **Les tokens de raisonnement ne sont pas comptés** dans
-   `usage.completion_tokens`. Sans correction, le budget mentait d'un facteur ~4.
-   → `llm.count_reasoning_tokens` les ré-estime.
-
-2. **Le modèle « pense » et renvoie un contenu vide** (`finish_reason: stop`,
-   746 caractères de raisonnement, 0 de contenu). Mesuré : une dernière ligne
-   impérative dans le prompt le ramène à émettre le JSON.
-   → `llm.final_directive`. Sans effet sur un modèle qui n'en a pas besoin.
-
-3. **Un `dict` libre dans un schéma ne se remplit pas.** Le champ `scope` d'une
-   tâche était un objet libre : `{"type": "object"}` dans le JSON Schema ne dit
-   rien de ce qu'il attend, et le modèle rendait `{}` sur 9 tâches sur 9, même
-   après trois retries à feedback. La correction n'est pas un meilleur prompt :
-   **c'est le pack qui déclare un modèle typé** (`ToolPack.scope_model()`), et
-   l'information est alors portée par la génération elle-même.
-
-Corollaire de conception, valable partout : tout ce qu'un prompt seul n'obtient
-pas d'un petit modèle doit passer par le **schéma**, où le retry à feedback peut
-le corriger. Le nombre minimum de tâches, le format du périmètre, et le fait
-qu'un champ du brief n'est pas une tâche sont trois règles portées par le schéma
-pour cette raison — chacune ajoutée après un échec observé.
-
----
-
-## Arborescence
-
-```
-engine/
-  schemas.py      tout l'état persisté + les sorties structurées des LLM
-  plan.py         lecture/écriture de plan.md — atomique, verrouillée, revalidée
-  providers.py    couche modèle + retry à feedback + FakeProvider
-  config.py       config.yml typée
-  context.py      build_context — la fonction critique, pure
-  brief.py        rôle 1
-  loop.py         rôle 2 — l'orchestrateur, ZÉRO appel LLM
-  agent.py        rôle 3 — un sous-agent = une tâche
-  synthesize.py   rôle 4
-  reporter.py     rôle 5 — Jinja2
-  cli.py          les deux gates humaines
-  toolpacks/      base.py  files.py  sql.py
-  templates/      plan.md.j2  report.html.j2
-investigations/
-  README.md       le registre
-  <YYYY-MM-DD_slug>/
-    plan.md       la seule mémoire
-    artifacts/    traces write-only, jamais relues par un LLM
-    results/      snapshots datés immuables
-corpus/           le corpus de démonstration
-config.yml        les six trous, visibles
-tests/
-```
-
-> `brief.py` et `cli.py` ne figuraient pas dans l'arborescence demandée : le rôle
-> 1 et la CLI ont besoin d'un fichier. Rien d'autre n'a été ajouté.
+**Corollaire, valable partout dans ce projet** : tout ce qu'un prompt seul n'obtient pas
+d'un petit modèle doit passer par le **schéma**, où le retry à feedback peut le corriger.
+Le nombre minimum de tâches, le format du périmètre, et le fait qu'un champ du brief
+n'est pas une tâche sont trois règles portées par le schéma pour cette raison — chacune
+ajoutée après un échec observé.
 
 ## Tests
 
@@ -394,29 +276,90 @@ tests/
 uv run pytest
 ```
 
-171 tests, sans aucun LLM. Ceux exigés par le cahier des charges :
+**171 tests, sans aucun LLM.** `FakeProvider` rend du JSON scripté et hérite du même
+mécanisme de retry que le vrai provider : tester la boucle sans modèle teste aussi ce qui
+rend un petit modèle exploitable.
 
-| exigence | test |
+| Propriété vérifiée | Test |
 |---|---|
-| 100 commits successifs → plan valide | `test_cent_commits_successifs_gardent_le_plan_valide` |
-| JSON invalide 2× puis valide → la tâche aboutit | `test_json_invalide_deux_fois_puis_valide` |
-| kill du process → relance au bon endroit | `test_kill_en_pleine_boucle_puis_relance_reprend_au_bon_endroit` |
-| 2 blocked consécutifs → circuit breaker | `test_deux_blocked_consecutifs_ouvrent_le_circuit` |
-| `validate` refuse → l'outil n'est pas exécuté | `test_un_refus_de_validate_n_execute_pas_l_outil` |
+| 100 commits successifs, plan toujours valide | `test_cent_commits_successifs_gardent_le_plan_valide` |
+| JSON invalide 2 fois puis valide, la tâche aboutit | `test_json_invalide_deux_fois_puis_valide` |
+| Kill du process, relance au bon endroit | `test_kill_en_pleine_boucle_puis_relance_reprend_au_bon_endroit` |
+| 2 blocked consécutifs, circuit breaker | `test_deux_blocked_consecutifs_ouvrent_le_circuit` |
+| `validate` refuse, l'outil n'est pas exécuté | `test_un_refus_de_validate_n_execute_pas_l_outil` |
 | `build_context` sans le logbook complet | `test_build_context_ne_contient_jamais_le_logbook_complet` |
 | `files` tourne sans importer duckdb | `test_le_moteur_tourne_sur_files_sans_importer_duckdb` |
+| La boucle ne contient aucun appel LLM (vérifié sur l'AST) | `test_la_boucle_ne_contient_aucun_appel_llm` |
+
+> Détail par fichier : [docs/CADRAGE.md](docs/CADRAGE.md#8-stratégie-de-tests)
+
+## Structure du projet
+
+```text
+test_2/
+├── engine/
+│   ├── schemas.py          # tout l'état persisté + les sorties structurées des LLM
+│   ├── plan.py             # plan.md : écriture atomique, verrouillée, revalidée
+│   ├── providers.py        # couche modèle + retry à feedback + FakeProvider
+│   ├── config.py           # config.yml typé
+│   ├── context.py          # build_context — la fonction critique, pure
+│   ├── brief.py            # rôle 1
+│   ├── loop.py             # rôle 2 — l'orchestrateur, AUCUN appel LLM
+│   ├── agent.py            # rôle 3 — un sous-agent = une tâche
+│   ├── synthesize.py       # rôle 4
+│   ├── reporter.py         # rôle 5 — Jinja2
+│   ├── cli.py              # la CLI inv, les deux gates humaines
+│   ├── toolpacks/          # base.py, files.py, sql.py — le seul point de variation
+│   └── templates/          # plan.md.j2, report.html.j2
+├── investigations/
+│   ├── README.md           # le registre
+│   └── <date>_<slug>/
+│       ├── plan.md         # la seule mémoire du système
+│       ├── artifacts/      # traces write-only, jamais relues par un LLM
+│       └── results/        # snapshots datés immuables
+├── corpus/                 # le corpus de démonstration
+├── docs/                   # CADRAGE.md (pourquoi) + ARCHITECTURE.md (comment)
+├── tests/
+├── config.yml              # les six paramètres explicites
+└── .env.example
+```
 
 ## Limites connues
 
-- **`gemma4:e4b` bloque environ une tâche sur trois** sur ce corpus. Le moteur
-  dégrade proprement — tâche `blocked`, raison inscrite, circuit breaker, reprise
-  possible avec `--retry-blocked` — mais une enquête complète du premier coup
-  demande un modèle plus gros. C'est une limite du modèle, pas du moteur : la
-  même boucle avec `FakeProvider` est déterministe et verte.
-- Une tâche `blocked` bloque définitivement ses dépendantes dans le run courant.
-  C'est voulu : mieux vaut trois tâches non exécutées qu'une chaîne de
-  raisonnement bâtie sur un maillon manquant. `inv status` les montre en
-  `pending`.
-- Le compteur de `blocked` consécutifs est propre au run courant, pas cumulé
-  entre deux relances.
-- `artifacts/` n'est jamais purgé.
+- **`gemma4:e4b` bloque environ une tâche sur trois** sur ce corpus. Le moteur dégrade
+  proprement — tâche `blocked`, raison inscrite, circuit breaker, reprise possible avec
+  `--retry-blocked` — mais une enquête complète du premier coup demande un modèle plus
+  gros. C'est une limite du modèle, pas du moteur : la même boucle avec `FakeProvider`
+  est déterministe et verte.
+- **Une tâche `blocked` bloque définitivement ses dépendantes** dans le run courant.
+  C'est voulu : mieux vaut trois tâches non exécutées qu'une chaîne de raisonnement bâtie
+  sur un maillon manquant. `inv status` les montre en `pending`.
+- **Le rôle 1 en mode conversationnel n'a été testé qu'avec `FakeProvider`.** Tous les
+  runs réels ont utilisé `--yes`. Le code existe, le parcours interactif n'a pas été
+  éprouvé sur le vrai modèle.
+- **Le pack `sql` n'a jamais tourné face à un vrai LLM.** Ses 27 tests couvrent la
+  validation et l'exécution, mais aucun sous-agent réel ne l'a piloté.
+- **Le compteur de blocages consécutifs** est propre au run courant, pas cumulé entre
+  deux relances.
+- **`artifacts/` n'est jamais purgé.**
+- **Les artefacts visuels sont hors périmètre** : le champ `chart` existe et reste
+  `null`. Voir [docs/CADRAGE.md](docs/CADRAGE.md#6-décisions) pour le point à trancher.
+
+## Licences & composants
+
+| Composant | Rôle | Licence |
+|---|---|---|
+| Python 3.12 | Langage | PSF-2.0 |
+| uv | Gestion de paquets et d'environnement | MIT / Apache-2.0 |
+| pydantic 2.13.4 | Schémas et validation | MIT |
+| httpx 0.28.1 | Client HTTP | BSD-3-Clause |
+| python-frontmatter 1.3.0 | Lecture/écriture du frontmatter | MIT |
+| ruamel.yaml 0.19.1 | YAML round-trip | MIT |
+| typer 0.27.0 | CLI | MIT |
+| rich 15.0.0 | Affichage terminal | MIT |
+| jinja2 3.1.6 | Templates (plan, rapport) | BSD-3-Clause |
+| duckdb 1.5.5 | Base analytique, extra `sql` uniquement | MIT |
+| pytest 9.1.1 | Tests | MIT |
+| Ollama | Serveur LLM (service central mutualisé) | MIT |
+| `gemma4:e4b` | Modèle | Gemma Terms of Use (Google) — pas une licence OSI |
+| **Ce projet** | Code applicatif | MIT — Copyright (c) 2026 floSa |
