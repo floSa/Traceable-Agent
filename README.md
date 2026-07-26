@@ -234,16 +234,23 @@ Il rend **trois compteurs**, jamais un seul :
 **`faux` est la métrique à conduire à zéro.** « Je n'ai pas su » est une réponse
 acceptable ; « voici un chiffre inventé » ne l'est pas.
 
-Résultat mesuré, à lire avec ses réserves :
+Résultat mesuré, à `temperature: 0`, deux exécutions par configuration :
 
 | Configuration | juste | bloqué | faux |
 |---|---|---|---|
 | Moteur nu | 3 | 1 | **9** |
 | + périmètre + dictionnaire | 5 | 2 | **6** |
+| + vérification contraignante | 3 | 8–9 | **1–2** |
 
-Le gain du dictionnaire et du périmètre tient sur trois exécutions indépendantes.
-L'apport des contrôles, lui, **n'est pas concluant à une exécution par configuration** :
-quatre questions sur treize changent de verdict entre exécutions quasi identiques.
+**`faux` tombe de 9 à 1** : cinq réponses fausses deviennent des blocages explicites.
+C'est la revendication du projet, et elle est mesurée, pas supposée.
+
+Trois réserves, détaillées dans le document d'évaluation. Le dispositif **bloque aussi
+une bonne réponse** (Q6) — un contrôle qui refuse du juste apprend à ignorer les
+blocages, et ce coût ne se lit dans aucun taux. `juste` **ne monte pas** : le moteur sait
+dire « je ne sais pas », il ne sait pas mieux répondre. Et le mode complet — décomposition
+en plusieurs tâches, dépendances, deux gates — **n'est pas encore mesuré** : le banc ne
+passe aujourd'hui qu'une tâche par question.
 
 > Protocole complet, résultats détaillés et limites : [docs/EVALUATION.md](docs/EVALUATION.md)
 

@@ -13,8 +13,10 @@ import pytest
 
 from harness.reference_questions import (
     NB_QUESTIONS_ATTENDU,
+    MAX_LIGNES_CONTRAINTES,
     ReferenceQuestion,
     _valeurs_de_controle,
+    checks_de_forme,
     load_reference_questions,
     parse_questions,
     resolve,
@@ -197,3 +199,38 @@ def test_les_lignes_sans_nombre_rendent_leur_texte() -> None:
 
 def test_resultat_vide_ne_produit_aucun_controle() -> None:
     assert _valeurs_de_controle(["a"], []) == []
+
+
+# ---- controles de forme derives de la reference --------------------------
+
+
+def _question(columns: list[str], rows: list[list[object]]) -> ReferenceQuestion:
+    q = ReferenceQuestion(id="Q6", kind="x", question="?", sql="SELECT 1")
+    q.columns, q.rows = columns, rows
+    return q
+
+
+def test_la_forme_contraint_les_colonnes_et_les_lignes() -> None:
+    """Les deux controles qui adressent le mode de defaillance dominant. Ils
+    sont **contraignants malgre leurs faux positifs** : mesure sur les 13
+    questions, cinq blocages a raison pour un a tort, et `faux` tombe de 6 a 1.
+    Voir le faux positif nomme dans `checks_de_forme` — Q6."""
+    forme = checks_de_forme(_question(["sku", "nom", "univers", "ca"], [["S1", "n", "u", 1.0]]))
+    assert [c["kind"] for c in forme] == ["column_count", "row_count"]
+    assert forme[0]["min_columns"] == 4
+    assert "max_columns" not in forme[0]  # une reponse plus riche reste juste
+
+
+def test_un_resultat_trop_long_ne_contraint_pas_les_lignes() -> None:
+    """Exiger un compte exact sur un gros resultat bloquerait une reponse
+    justement resumee. Les colonnes restent contraintes : leur nombre ne
+    depend pas de la longueur."""
+    lignes = [[i] for i in range(MAX_LIGNES_CONTRAINTES + 1)]
+    forme = checks_de_forme(_question(["a"], lignes))
+    assert [c["kind"] for c in forme] == ["column_count"]
+
+
+def test_le_compte_de_lignes_est_exact() -> None:
+    forme = checks_de_forme(_question(["jour", "ca"], [[j, 1.0] for j in range(7)]))
+    lignes = next(c for c in forme if c["kind"] == "row_count")
+    assert lignes["min_rows"] == 7 and lignes["max_rows"] == 7

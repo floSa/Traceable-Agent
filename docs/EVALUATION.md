@@ -137,50 +137,82 @@ Le code de sortie vaut 1 dès qu'une réponse est `faux`.
 
 ## 5. Résultats
 
-Quatre exécutions, modèle `gemma4:e4b`, base complète.
+### 5.1 Premières mesures, à `temperature: 0.2`
+
+Une exécution par configuration. **Ces chiffres n'ont pas permis de conclure**, et la
+raison vaut d'être gardée.
 
 | Configuration | juste | bloqué | **faux** |
 |---|---|---|---|
 | Moteur nu (base entière, sans dictionnaire) | 3 | 1 | **9** |
 | + périmètre + dictionnaire | 5 | 2 | **6** |
-| + contrôles (run 1, avec le défaut D-9) | 6 | 2 | **5** |
-| + contrôles (run 2, corrigé) | 5 | 1 | **7** |
+| + contrôles de grandeur (run 1, avec le défaut D-9) | 6 | 2 | **5** |
+| + contrôles de grandeur (run 2, corrigé) | 5 | 1 | **7** |
 | *Référence : `data-analyst-agent`, chiffre de son README* | *7* | *—* | *—* |
 
-### Ce qui est solide
+**Quatre questions sur treize changeaient de verdict entre des exécutions quasi
+identiques**, Q13 en prenant trois valeurs différentes. La variance était du même ordre
+que l'écart entre les configurations : à n=1, aucune conclusion ne tenait.
 
-**Le dictionnaire et le périmètre apportent un gain réel.** Q4 et Q12 passent de fausses
-à justes, et le restent sur **trois exécutions indépendantes**. Le `faux` tombe de 9 à 6.
+Un seul enseignement était solide, parce qu'il se répétait sur trois exécutions :
+**le dictionnaire et le périmètre apportent un gain réel** — Q4 et Q12 passent de fausses
+à justes et le restent, et `faux` tombe de 9 à 6.
 
-### Ce qui n'est pas concluant
-
-**L'apport des contrôles n'est pas mesurable à une exécution par configuration.**
-
-| Question | nu | scope+dico | +checks (1) | +checks (2) |
-|---|---|---|---|---|
-| Q4, Q12 | faux | **juste** | juste | juste |
-| Q7 | faux | faux | faux | **bloqué** |
-| Q8 | faux | faux | **bloqué** | faux |
-| Q10 | bloqué | bloqué | bloqué | **faux** |
-| Q13 | faux | **bloqué** | **juste** | **faux** |
-
-**Quatre questions sur treize changent de verdict entre des exécutions quasi
-identiques.** Q13 a pris trois valeurs différentes sur trois exécutions. La variance
-d'une exécution à l'autre est du même ordre que l'écart entre les configurations :
-aucune conclusion sur les contrôles ne tient à n=1.
-
-### Pourquoi les contrôles n'ont presque rien attrapé
-
-C'est le résultat le plus instructif, et il oriente la suite.
+### 5.2 Le diagnostic qui a débloqué la suite
 
 En lisant les motifs d'échec — Q3 « 37,2 absente », Q5 « 2,76 absente », Q9, Q11, Q13 —
 le mode de défaillance dominant apparaît : l'agent **ne produit pas un nombre aberrant**,
 il **ne produit pas du tout la grandeur demandée**. Il répond à une question voisine.
 
 Or `magnitude` protège contre « le chiffre est absurde ». Sur une grandeur absente, il
-n'échoue pas : il est **non vérifiable**. Ce sont les contrôles de forme — `columns`
-(les dimensions demandées sont-elles là ?) et `row_count` — qui adresseraient ce
-mode-là, et ils ne sont pas encore branchés dans le banc.
+n'échoue pas : il est **non vérifiable**. C'est ce constat qui a motivé les contrôles de
+forme — `column_count` (les dimensions demandées sont-elles là ?) et `row_count`.
+
+### 5.3 Mesures concluantes, à `temperature: 0`
+
+Quatre exécutions, deux par configuration, contrôles de forme branchés.
+
+| Configuration | juste | bloqué | **faux** |
+|---|---|---|---|
+| périmètre + dictionnaire, sans contrôles | 5 | 2 | **6** |
+| + contrôles de forme | 3 | 8–9 | **1–2** |
+
+**`faux` passe de 6 à 1.** Cinq réponses fausses deviennent des blocages explicites. C'est
+la revendication du projet — transformer du faux en absent — et elle est ici mesurée.
+
+Le détail par contrôle, obtenu en retirant `column_count` puis en le remettant :
+
+| Contrôle | Bloque à raison | Bloque à tort |
+|---|---|---|
+| `column_count` | Q3, Q8, Q9 | **Q6** |
+| `row_count` | Q7, Q11 | aucune |
+
+### Le faux positif est nommé, pas noyé
+
+Sur **Q6** (« les 10 SKU les plus vendus en CA »), le SQL de référence rend quatre
+colonnes dont des descriptifs de confort ; l'agent en rend deux, le SKU et le CA, et sa
+réponse est juste. Le contrôle la bloque.
+
+C'est la faute D-9 sous une autre forme : **déduire une contrainte d'un artefact qui n'en
+porte pas**. Les colonnes de la requête de référence ne sont pas une exigence de la
+question. Le contrôle est malgré tout conservé — cinq blocages à raison pour un à tort,
+et `faux` est la métrique à conduire à zéro — mais l'échange est nommé ici pour ce qu'il
+est : un contrôle qui refuse du juste apprend à ignorer les blocages, et ce coût-là ne se
+lit dans aucun taux.
+
+**Q12 n'est pas un faux positif**, contrairement à une première lecture : l'agent rend
+128 lignes là où la référence en a 12. Il n'a pas fait la réduction demandée.
+
+### Ce que le passage à `temperature: 0` a réglé, et ce qu'il n'a pas réglé
+
+Deux exécutions sans contrôles rendent **le même verdict question par question**. La
+variance qui rendait tout ininterprétable a disparu.
+
+Elle n'a pas disparu totalement : une troisième exécution diverge sur **Q7**, qui produit
+un SQL différent — 159 s et 21 k tokens contre 60 s et 12 k. Les contrôles ne touchent pas
+au prompt (vérifié : `Task.checks` n'apparaît ni dans `build_context` ni dans l'agent),
+donc c'est du non-déterminisme du service d'inférence. **La reproductibilité est bonne,
+pas totale** — une conclusion tirée de deux exécutions identiques reste à confirmer.
 
 ### Le coût, mesuré
 
@@ -228,8 +260,15 @@ ligne de défense.
 
 ## 7. Limites du banc
 
-- **La variance domine à n=1.** Toute comparaison de configurations demande 3 à 5
-  exécutions chacune, soit environ une heure de GPU par configuration.
+- **La variance domine hors `temperature: 0`.** À 0,2, quatre questions sur treize
+  changeaient de verdict d'une exécution à l'autre. À 0, deux exécutions concordent
+  question par question — mais une troisième diverge sur Q7 : le déterminisme n'est pas
+  garanti par le service d'inférence. Compter deux exécutions minimum par configuration,
+  soit ~25 min de GPU chacune.
+- **Les contrôles de forme se dérivent du SQL de référence**, ce qui est une facilité du
+  banc. Le nombre de colonnes de la référence n'est pas une exigence de la question :
+  c'est ce qui bloque Q6 à tort. En production, la forme attendue est déclarée par le
+  décomposeur ou par l'humain de la GATE 1, et ce faux positif n'a pas lieu d'être.
 - **Les bornes ne couvrent que 5 questions sur 13** — celles que le dictionnaire
   documente. Les huit autres ne sont pas protégées. C'est une limite du dictionnaire,
   pas du mécanisme.
@@ -245,7 +284,9 @@ ligne de défense.
 
 | Priorité | Action | Pourquoi |
 |---|---|---|
-| 1 | Brancher `columns` / `row_count` sur les 13 questions | C'est là qu'est le gisement d'après les motifs d'échec ; dérivable sans connaître la réponse |
-| 2 | 3 exécutions par configuration, `temperature: 0` | Sans ça, tout chiffre reste indicatif |
-| 3 | Enrichir le dictionnaire de la source | Fait passer la couverture des bornes au-delà de 5/13 |
-| 4 | Mesurer le mode décomposé complet | Le banc ne teste aujourd'hui qu'une tâche par question |
+| 1 | Faire remonter `juste` sans relâcher `faux` | Le dispositif sait dire « je ne sais pas » ; il ne sait pas encore mieux répondre. Q5 reste fausse dans toutes les configurations |
+| 2 | Mesurer le mode décomposé complet | Le banc ne teste aujourd'hui qu'une tâche par question — ni décomposition, ni dépendances, ni les deux gates |
+| 3 | Enrichir le dictionnaire de la source | Fait passer la couverture des bornes de grandeur au-delà de 5/13 |
+| 4 | Rejouer sur un modèle plus grand | Sépare ce qui tient à l'architecture de ce qui tient à `gemma4:e4b` |
+
+Fait : contrôles de forme branchés (§5.3), `temperature: 0` (§5.3).

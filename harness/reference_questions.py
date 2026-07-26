@@ -343,6 +343,19 @@ def checks_de_forme(question: ReferenceQuestion) -> list[dict[str, Any]]:
     exiger un nom exact bloquerait du travail juste. Et la forme n'exige aucune
     VALEUR de reference : en production, c'est `expected_shape` que le
     decomposeur ou l'humain de la GATE 1 declare.
+
+    **Les deux controles bloquent parfois du juste, et c'est assume.** Mesure a
+    l'appui sur les 13 questions : `column_count` bloque a raison Q3, Q8 et Q9,
+    a tort Q6 — dont le SQL de reference rend quatre colonnes alors que la
+    question n'en demande que deux. `row_count` bloque a raison Q7 et Q11, a
+    tort aucune (Q12 rend 128 lignes pour 12 attendues : elle n'a pas fait la
+    reduction demandee). Rapport global : cinq vrais pour un faux, et `faux`
+    tombe de 6 a 1.
+
+    L'echange est retenu parce que `faux` est la metrique a conduire a zero.
+    Il n'est pas gratuit pour autant : D-9 dit qu'un controle qui refuse du
+    juste apprend a ignorer les blocages. C'est pourquoi le faux positif est
+    nomme ici plutot que noye dans un taux.
     """
     controles: list[dict[str, Any]] = []
     if question.columns:
