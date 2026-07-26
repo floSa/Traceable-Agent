@@ -18,6 +18,8 @@ Et il injecte un LIMIT quand la requete n'en a pas.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +47,12 @@ _CTES = re.compile(r"(?:\bwith\b|,)\s*([a-zA-Z_]\w*)\s+as\s*\(", re.IGNORECASE)
 _LIMIT = re.compile(r"\blimit\s+\d+", re.IGNORECASE)
 _COMMENTAIRES = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
 
+# `EXTRACT(YEAR FROM s.date)`, `SUBSTRING(x FROM 1 FOR 3)`, `TRIM(BOTH ' ' FROM x)` :
+# le mot-cle FROM y sert la syntaxe d'une fonction, pas a designer une table.
+_FROM_NON_TABLE = re.compile(
+    r"\b(?:extract|substring|trim|overlay|position)\s*\([^()]*\)", re.IGNORECASE
+)
+
 
 class SqlScope(BaseModel):
     """Le perimetre d'une tache, cote base. Schema vu par le brief_builder."""
@@ -54,12 +62,123 @@ class SqlScope(BaseModel):
         min_length=1,
         description="Noms des tables que cette tache a le droit d'interroger.",
     )
+    grain: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Colonnes du grain de la tache, ex: ['store_id', 'date']. Sert au "
+            "controle d'agregation prealable ci-dessous."
+        ),
+    )
+    aggregate_before_join: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Tables de faits a agreger au grain declare AVANT toute jointure, "
+            "ex: ['sales_daily']. Joindre le detail directement duplique la "
+            "mesure de l'autre table une fois par ligne de detail."
+        ),
+    )
+
+
+# Le dictionnaire passe AVANT la question, et non en reponse a un outil : les
+# pieges qu'il decrit doivent etre connus au moment d'ecrire la requete, pas
+# apres. Un modele qui apprend au 3e tour que le e-commerce est une ligne de
+# `stores` a deja rendu son top magasins. (Mecanisme repris de
+# data-analyst-agent, ou il fait gagner les pieges qu'il ENONCE.)
+DICTIONNAIRE_PROMPT = """
+--- Dictionnaire de la source ---
+Ce document decrit la base que tu interroges : le sens de chaque colonne, les
+valeurs admises, et les pieges de modelisation. Il fait autorite sur le schema
+brut. Lis-le avant d'ecrire ta requete, et respecte ses mises en garde meme
+quand le SQL « evident » semble marcher : c'est justement la qu'il est faux.
+
+{dictionnaire}
+--- fin du dictionnaire ---"""
+
+
+def _json_sur(valeur: Any) -> Any:
+    """Rend une valeur duckdb comparable : Decimal -> float, date -> ISO.
+    Sans ca, un `Decimal('10186669.50')` n'est pas un nombre pour un controle."""
+    if isinstance(valeur, Decimal):
+        return float(valeur)
+    if isinstance(valeur, (date, datetime)):
+        return valeur.isoformat()
+    return valeur
 
 
 def strip_sql(sql: str) -> str:
     """Retire commentaires et point-virgule final : on raisonne sur le sens,
     pas sur la mise en forme."""
     return _COMMENTAIRES.sub(" ", sql or "").strip().rstrip(";").strip()
+
+
+def referenced_tables(sql: str) -> set[str]:
+    """Les tables reellement interrogees, en minuscules.
+
+    Deux pieges, tous deux constates sur de vraies requetes :
+
+    - les CTE definies par la requete sont soustraites, sinon un
+      `WITH q AS (...) SELECT ... FROM q` declencherait un faux « hors
+      perimetre » sur `q` ;
+    - `EXTRACT(YEAR FROM s.date)` et `SUBSTRING(x FROM 1 FOR 3)` utilisent le
+      mot-cle FROM sans designer de table. Sans neutralisation, `s.date` est
+      pris pour une table et une requete parfaitement legitime se fait refuser.
+    """
+    propre = _FROM_NON_TABLE.sub(" ", strip_sql(sql))
+    ctes = {c.lower() for c in _CTES.findall(propre)}
+    return {t.lower() for t in _TABLES.findall(propre)} - ctes
+
+
+_GROUP_BY_RE = re.compile(r"\bgroup\s+by\b(.*?)(?:\border\s+by\b|\bhaving\b|$)",
+                          re.IGNORECASE | re.DOTALL)
+_JOIN_RE = re.compile(r"\bjoin\b", re.IGNORECASE)
+
+
+def _blocs_parentheses(sql: str) -> list[str]:
+    """Le contenu de chaque groupe de parentheses de premier niveau.
+
+    Les CTE et les sous-requetes vivent la. On les extrait pour pouvoir
+    distinguer ce qui est agrege de ce qui ne l'est pas.
+    """
+    blocs: list[str] = []
+    profondeur = 0
+    debut = 0
+    for i, c in enumerate(sql):
+        if c == "(":
+            if profondeur == 0:
+                debut = i + 1
+            profondeur += 1
+        elif c == ")":
+            profondeur -= 1
+            if profondeur == 0:
+                blocs.append(sql[debut:i])
+            elif profondeur < 0:
+                profondeur = 0
+    return blocs
+
+
+def agrege_au_grain(bloc: str, grain: list[str]) -> bool:
+    """Ce bloc agrege-t-il sur toutes les colonnes du grain ?"""
+    if not grain:
+        return False
+    groupes = _GROUP_BY_RE.search(bloc)
+    if groupes is None:
+        return False
+    clauses = groupes.group(1).lower()
+    return all(colonne.lower() in clauses for colonne in grain)
+
+
+def hors_agregation(sql: str, grain: list[str]) -> str:
+    """Le SQL prive de ses blocs deja agreges au grain.
+
+    Ce qui reste est ce qui est joint « en detail ». C'est la-dessus que porte
+    le controle : une table de faits qui subsiste ici est jointe sans avoir ete
+    agregee, et sa mesure sera dupliquee.
+    """
+    reste = sql
+    for bloc in _blocs_parentheses(sql):
+        if agrege_au_grain(bloc, grain):
+            reste = reste.replace(f"({bloc})", " ", 1)
+    return reste
 
 
 class SqlToolPack(BasePack):
@@ -71,20 +190,59 @@ class SqlToolPack(BasePack):
         self.cfg = pack_cfg
         self.database = cfg.path(pack_cfg.database)
         self.tables: list[str] = [str(t) for t in (self.scope.get("tables") or [])]
+        # Resultats structures des requetes de CETTE tache, dans l'ordre. Ce
+        # sont eux, et jamais la prose du modele, que verifie un controle.
+        self.tables_produites: list[dict[str, Any]] = []
+        self.grain: list[str] = [str(g) for g in (self.scope.get("grain") or [])]
+        self.aggregate_before_join: list[str] = [
+            str(t).lower() for t in (self.scope.get("aggregate_before_join") or [])
+        ]
+        self.dictionary = self._lire_dictionnaire(cfg)
+
+    def _lire_dictionnaire(self, cfg: Config) -> str:
+        """Le dictionnaire de la source, s'il est configure.
+
+        Il decrit ce que les donnees VEULENT DIRE : pieges de modelisation,
+        ordres de grandeur. Il fait autorite sur le schema brut — le DDL dit les
+        types, lui dit le sens.
+        """
+        if not self.cfg.dictionary:
+            return ""
+        chemin = cfg.path(self.cfg.dictionary)
+        if not chemin.is_file():
+            return ""
+        texte = chemin.read_text(encoding="utf-8")
+        plafond = self.cfg.max_dictionary_chars
+        if plafond and len(texte) > plafond:
+            texte = texte[:plafond] + "\n[... dictionnaire tronque]"
+        return texte
 
     # ---- description injectee au prompt ---------------------------------
 
     def describe(self) -> str:
         tables = ", ".join(f"`{t}`" for t in self.tables) or "(aucune — tout sera refuse)"
-        return (
-            "Tu interroges une base duckdb en lecture seule.\n"
-            f"Tables autorisees pour CETTE tache : {tables}\n"
+        blocs = [
+            "Tu interroges une base duckdb en lecture seule.",
+            f"Tables autorisees pour CETTE tache : {tables}",
             "Toute requete qui n'est pas un SELECT/WITH, ou qui touche une autre table, "
-            "est refusee avant execution.\n"
-            f"Un LIMIT {self.cfg.default_limit} est ajoute si tu n'en mets pas.\n"
-            "Commence par `schema()` si tu ne connais pas les colonnes.\n\n"
-            "Outils :\n" + self.render_tools()
-        )
+            "est refusee avant execution.",
+            f"Un LIMIT {self.cfg.default_limit} est ajoute si tu n'en mets pas.",
+            "Commence par `schema()` si tu ne connais pas les colonnes.",
+        ]
+        if self.grain:
+            blocs.append(
+                f"Grain impose a cette tache : {', '.join(f'`{g}`' for g in self.grain)}."
+            )
+        if self.aggregate_before_join:
+            cibles = ", ".join(f"`{t}`" for t in self.aggregate_before_join)
+            blocs.append(
+                f"AVANT de joindre {cibles}, agrege les faits au grain ci-dessus dans un "
+                "CTE. Joindre directement duplique la mesure une fois par ligne de detail."
+            )
+        if self.dictionary:
+            blocs.append(DICTIONNAIRE_PROMPT.format(dictionnaire=self.dictionary))
+        blocs.append("Outils :\n" + self.render_tools())
+        return "\n".join(blocs)
 
     def scope_hint(self) -> str:
         return (
@@ -147,15 +305,16 @@ class SqlToolPack(BasePack):
                 "(elles contourneraient les tables declarees)"
             )
 
-        # tables reellement referencees, moins les CTE definies dans la requete
-        ctes = {c.lower() for c in _CTES.findall(sql)}
-        referencees = {t.lower() for t in _TABLES.findall(sql)} - ctes
+        referencees = referenced_tables(sql)
         autorisees = {t.lower() for t in self.tables}
         if hors_perimetre := sorted(referencees - autorisees):
             return Refus(
                 f"tables hors perimetre : {hors_perimetre}. "
                 f"Cette tache n'autorise que {sorted(autorisees)}"
             )
+
+        if refus_grain := self._controler_le_grain(sql):
+            return refus_grain
 
         sql = self.inject_limit(sql)
 
@@ -164,6 +323,34 @@ class SqlToolPack(BasePack):
             return Refus(f"requete rejetee par duckdb (EXPLAIN) : {erreur}")
 
         return Ok(args={"sql": sql})
+
+    def _controler_le_grain(self, sql: str) -> Refus | None:
+        """Une table de faits jointe sans agregation prealable duplique sa mesure.
+
+        C'est le piege qui a fait rendre un panier article 60 fois trop petit a
+        un agent, et 20 fois trop grand a un autre : l'allowlist ne l'attrape
+        pas, puisque la requete naive n'utilise que des tables autorisees.
+
+        Analyse STRUCTURELLE au niveau regex : elle reconnait une forme de SQL,
+        pas une semantique. Elle attrape la forme naive ; une reecriture
+        equivalente lui echappe. C'est un fil-piege, pas un theoreme.
+        """
+        if not self.aggregate_before_join or not self.grain:
+            return None
+        reste = hors_agregation(sql, self.grain)
+        if not _JOIN_RE.search(reste):
+            return None  # pas de jointure : rien a dupliquer
+        fautives = sorted(t for t in self.aggregate_before_join if t in referenced_tables(reste))
+        if not fautives:
+            return None
+        grain = ", ".join(self.grain)
+        return Refus(
+            f"grain : {fautives} est jointe sans avoir ete agregee. Sa mesure serait "
+            f"dupliquee une fois par ligne de detail.\n"
+            f"Agrege d'abord dans un CTE : "
+            f"`WITH q AS (SELECT {grain}, SUM(...) FROM {fautives[0]} GROUP BY {grain})`, "
+            f"puis joins `q`."
+        )
 
     def inject_limit(self, sql: str) -> str:
         if _LIMIT.search(sql):
@@ -223,6 +410,15 @@ class SqlToolPack(BasePack):
             cur = con.execute(sql)
             colonnes = [d[0] for d in cur.description or []]
             lignes = cur.fetchmany(self.cfg.max_rows)
+
+        # Le resultat STRUCTURE est conserve, pas seulement son rendu texte :
+        # c'est sur lui que porte toute verification chiffree. Verifier la prose
+        # du modele reviendrait a lui demander de se juger lui-meme.
+        table = {
+            "columns": list(colonnes),
+            "rows": [[_json_sur(v) for v in ligne] for ligne in lignes],
+        }
+        self.tables_produites.append(table)
 
         rendu = [" | ".join(colonnes), "-|-".join("-" * len(c) for c in colonnes)]
         rendu += [" | ".join("NULL" if v is None else str(v) for v in ligne) for ligne in lignes]

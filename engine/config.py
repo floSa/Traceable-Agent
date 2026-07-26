@@ -109,6 +109,11 @@ class SqlPackConfig(Section):
     default_limit: int = 1000
     max_rows: int = 5000
     read_only: bool = True
+    # Markdown decrivant la base : le DDL dit les types, le dictionnaire dit ce
+    # que les donnees VEULENT DIRE (pieges de modelisation, ordres de grandeur).
+    # Injecte dans la description du pack, donc AVANT la question.
+    dictionary: str | None = None
+    max_dictionary_chars: int = 12000
 
 
 class ToolpackConfig(Section):
