@@ -15,4 +15,9 @@ __pycache__/
 .venv/
 investigations/*/
 !investigations/README.md
-data/
+# Le jeu d'epreuve est versionne au format Parquet (~6 Mo) : le banc doit etre
+# reproductible sur une autre machine sans acces a un second depot.
+# Ce qui est GENERE ne l'est pas.
+data/maxizoo.duckdb
+data/maxizoo_dictionnaire.md
+data/export/tables/*.csv
