@@ -1,0 +1,106 @@
+# =============================================================================
+# Configuration du moteur d'investigation.
+#
+# REGLE : tout parametre qui change le comportement du moteur est ICI, visible.
+# Les six "trous" du pattern d'origine sont annotes TROU 1..6.
+# Les secrets et l'adressage machine restent dans .env (`${VAR:-defaut}`).
+# =============================================================================
+
+paths:
+  investigations: ./investigations
+
+# -----------------------------------------------------------------------------
+# Couche modele — pointe sur le service LLM central (~/mes_projets/llm-service),
+# endpoint OpenAI-compatible. Aucun Ollama propre a ce projet.
+# -----------------------------------------------------------------------------
+llm:
+  base_url: ${INV_LLM_BASE_URL:-http://localhost:11434/v1}
+  model: ${INV_LLM_MODEL:-gemma4:e4b}
+  api_key: ${INV_LLM_API_KEY:-ollama}
+  timeout_s: 600
+  # auto : tente response_format=json_schema (supporte par le central),
+  #        retombe automatiquement sur l'injection du schema dans le prompt.
+  structured_output: auto
+  # Retry a feedback : on renvoie au modele l'erreur de validation Pydantic.
+  # C'est ce qui rend un petit modele exploitable. Ne pas descendre sous 3.
+  max_validation_retries: 3
+  temperature: 0.2
+  # gemma4:e4b emet des tokens de raisonnement que l'API ne compte pas dans
+  # usage.completion_tokens : on les estime pour que le budget reste honnete.
+  count_reasoning_tokens: true
+  # gemma4:e4b termine parfois son raisonnement et renvoie un contenu VIDE
+  # (finish_reason=stop). Une derniere ligne imperative dans le prompt le
+  # ramene a emettre le JSON. Sans effet sur les modeles qui n'en ont pas besoin.
+  final_directive: true
+
+# -----------------------------------------------------------------------------
+# TROU 1 — CONTEXTE PASSE AU SOUS-AGENT
+# build_context(plan, task) est une fonction pure, testee isolement.
+# Elle n'assemble QUE : la question globale, les watch_outs, et l'`insight`
+# des taches listees dans depends_on. Jamais le logbook complet.
+# -----------------------------------------------------------------------------
+context:
+  max_chars: 4000
+  include_question: true
+  include_watch_outs: true
+  include_dependencies: true
+  max_dependencies: 10
+
+# -----------------------------------------------------------------------------
+# TROU 2 — EVALUATION DU CRITERE D'ARRET
+#   none     : jamais evalue (defaut POC)
+#   llm      : un appel dedie minimal (critere + insights accumules)
+#   callable : une fonction Python fournie, "module:fonction"
+# L'evaluation est journalisee dans logbook.stop_log quelle que soit l'issue.
+# -----------------------------------------------------------------------------
+stop:
+  strategy: none
+  callable: null
+  max_tokens: 2000
+
+# -----------------------------------------------------------------------------
+# TROU 4 — BUDGET D'ITERATION DU SOUS-AGENT
+# Depassement -> tache marquee `blocked` avec la raison. Jamais de crash.
+# -----------------------------------------------------------------------------
+agent:
+  # Defaut du moteur : 5 (engine/config.py). Valeur livree ici : 10, mesuree
+  # necessaire avec gemma4:e4b, qui interroge volontiers un fichier par appel
+  # sur les taches a perimetre multi-fichiers. Redescendre a 5 avec un modele
+  # plus synthetique : c'est un cout direct en tokens.
+  max_tool_calls: 10         # nb max de tours (appel d'outil OU refus) par tache
+  max_tokens: 20000          # budget de la tache entiere
+  max_tokens_per_call: 4096  # plafond d'un seul appel LLM
+
+# -----------------------------------------------------------------------------
+# TROU 6 — REPRISE APRES ECHEC
+# Le fichier etant la seule source de verite, `inv run` reprend a la premiere
+# tache `pending`. Les `blocked` sont ignorees sauf --retry-blocked.
+# Circuit breaker : N blocked consecutifs arretent la boucle.
+# -----------------------------------------------------------------------------
+loop:
+  max_consecutive_blocked: 2
+  retry_blocked: false
+
+# -----------------------------------------------------------------------------
+# TOOLPACKS — la seule chose qui varie d'un usage a l'autre.
+# Le moteur ne connait aucun domaine metier.
+# -----------------------------------------------------------------------------
+toolpack:
+  default: files
+
+  files:
+    root: ./corpus
+    max_results: 50      # nb de lignes/fichiers rendus par grep/list
+    max_bytes: 20000     # taille max d'un ToolResult rendu au LLM
+    max_file_bytes: 200000
+
+  sql:
+    database: ./data/warehouse.duckdb
+    default_limit: 1000  # LIMIT injecte si la requete n'en a pas
+    max_rows: 5000
+    read_only: true
+
+# TROU 3 (ecriture du fichier) et TROU 5 (artefacts visuels) n'ont pas de
+# reglage : le premier est une invariante du moteur (JSON -> Pydantic ->
+# reecriture atomique revalidee), le second est hors perimetre du POC
+# (logbook.findings[].chart existe et reste null). Voir README > Extensions.
