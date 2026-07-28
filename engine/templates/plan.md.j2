@@ -1,0 +1,106 @@
+{# Vue humaine du plan. GENEREE a chaque ecriture, JAMAIS relue par le code
+   ni par un LLM : la source de verite est le frontmatter YAML ci-dessus. #}
+# {{ plan.title }}
+
+> `{{ plan.slug }}` — statut **{{ plan.status }}** — mode *{{ plan.mode }}* —
+> toolpack `{{ plan.toolpack }}` — modele `{{ plan.model or "?" }}` —
+> cree le {{ plan.created_at | ts }}
+
+## Brief
+
+**Question** : {{ plan.brief.question or "_(a definir)_" }}
+
+**Owner** : {{ plan.brief.owner or "_(non renseigne)_" }}
+
+**Livrable** : {{ plan.brief.deliverable or "_(non renseigne)_" }}
+
+### Cadre de decision
+
+| | |
+|---|---|
+| Decision | {{ plan.brief.decision_frame.decision or "—" }} |
+| Seuil d'action | {{ plan.brief.decision_frame.action_threshold or "—" }} |
+| Critere d'arret | {{ plan.brief.decision_frame.kill_criterion or "—" }} |
+
+### Points de vigilance
+{% if plan.brief.watch_outs %}
+{% for w in plan.brief.watch_outs %}
+- {{ w }}
+{% endfor %}
+{% else %}
+_(aucun)_
+{% endif %}
+
+## Taches
+
+| # | id | etat | titre | depend de |
+|---|---|---|---|---|
+{% for t in plan.brief.tasks %}
+| {{ loop.index }} | `{{ t.id }}` | {{ t.state }} | {{ t.title }} | {{ t.depends_on | join(", ") or "—" }} |
+{% endfor %}
+
+{% for t in plan.brief.tasks %}
+### {{ t.id }} — {{ t.title }}
+
+- **Question** : {{ t.question }}
+- **Perimetre** : `{{ t.scope }}`
+- **Forme attendue** : {{ t.expected_shape or "—" }}
+- **Sanity check** : {{ t.sanity_check or "—" }}
+- **Etat** : {{ t.state }}
+{% endfor %}
+
+## Logbook
+
+### Findings
+{% if plan.logbook.findings %}
+{% for f in plan.logbook.findings %}
+#### {{ f.task_id }}
+
+- **Resume** : {{ f.summary }}
+- **Insight** : {{ f.insight }}
+- **Influence** : {{ f.influence }}
+- **Artefacts** : {{ f.artifacts | join(", ") or "—" }}
+{% if f.chart %}
+- **Chart** : {{ f.chart }}
+{% endif %}
+{% endfor %}
+{% else %}
+_(aucun)_
+{% endif %}
+
+### Progression
+{% if plan.logbook.progress %}
+{% for p in plan.logbook.progress %}
+- {{ p }}
+{% endfor %}
+{% else %}
+_(rien)_
+{% endif %}
+
+### Ajustements
+{% if plan.logbook.adjustments %}
+{% for a in plan.logbook.adjustments %}
+- **{{ a.step }}** : {{ a.change }} — _{{ a.reason }}_
+{% endfor %}
+{% else %}
+_(aucun)_
+{% endif %}
+
+### Run log
+
+| tache | statut | debut | duree (s) | tokens |
+|---|---|---|---|---|
+{% for r in plan.logbook.run_log %}
+| `{{ r.task_id }}` | {{ r.status }} | {{ r.started_utc | ts }} | {{ r.duration_s }} | {{ r.tokens }} |
+{% endfor %}
+
+**Total tokens** : {{ plan.tokens_spent() }} / {{ plan.budget_tokens_total }}
+
+### Evaluations du critere d'arret
+{% if plan.logbook.stop_log %}
+{% for s in plan.logbook.stop_log %}
+- apres `{{ s.after_task }}` — strategie `{{ s.strategy }}` — fired=**{{ s.fired }}** — {{ s.reason or "—" }}
+{% endfor %}
+{% else %}
+_(aucune)_
+{% endif %}
