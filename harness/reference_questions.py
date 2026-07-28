@@ -1,9 +1,10 @@
 """Lecture des 13 questions de reference de l'export Maxizoo.
 
-Le fichier `questions_reference.md` n'est **pas** recopie dans ce depot : il vit
-dans la branche orpheline `export-db` de `sales-ops-planning-poc`, avec la base
-et le dictionnaire. Le choix est celui du projet d'origine — « une copie
-versionnee deriverait de lui en silence ». On le lit au runtime.
+Le fichier `questions_reference.md` est versionne dans `data/export/`, avec la
+base et le dictionnaire. Le projet d'origine faisait le choix inverse — « une
+copie versionnee deriverait de lui en silence » — mais un banc de mesure qu'on
+ne peut pas monter ailleurs ne prouve rien. La derive reste attrapee : le
+chargeur refuse d'ecrire si un volume s'ecarte du MANIFEST.
 
 Point de conception important : **les reponses attendues ne sont pas parsees**.
 Le document est regulier sur trois choses (le titre `## Q<n>`, la question en
@@ -157,7 +158,7 @@ def resolve(questions: list[ReferenceQuestion], database: Path) -> list[Referenc
     if not database.is_file():
         raise FileNotFoundError(
             f"base introuvable : {database}. Construis-la avec "
-            "`uv run python -m harness.load_base --export data/export`"
+            "`uv run python -m harness.load_base`"
         )
 
     import duckdb  # apres le controle : base absente est plus probable et plus actionnable

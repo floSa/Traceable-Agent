@@ -65,12 +65,25 @@ grandeur contrainte n'était pas identifiable dans le résultat. Ni un succès, 
 | [`harness/reference_questions.py`](../harness/reference_questions.py) | Lit les 13 questions, en dérive périmètre, valeurs attendues et contrôles |
 | [`harness/battery.py`](../harness/battery.py) | Passe les questions à une cible et rend les compteurs |
 
-### Rien n'est recopié
+### Le jeu d'épreuve est versionné ici — et pourquoi cette décision a changé
 
-`questions_reference.md`, `dictionnaire.md` et les tables vivent dans la branche
-orpheline `export-db` du dépôt `sales-ops-planning-poc`. Le choix est celui du projet
-d'origine et il est repris tel quel : *« une copie versionnée dériverait de lui en
-silence »*. Le banc les lit au runtime.
+`questions_reference.md`, `dictionnaire.md` et les tables vivent dans
+[`data/export/`](../data/export/), **dans ce dépôt**, au format Parquet : 6 Mo pour
+1 659 181 lignes, là où les CSV en pèsent 59.
+
+Le choix initial était l'inverse — les lire au runtime depuis la branche orpheline
+`export-db` du dépôt `sales-ops-planning-poc`, en reprenant l'argument du projet
+d'origine : *« une copie versionnée dériverait de lui en silence »*. **Cet argument
+était juste, et il a été tranché en sens inverse pour une raison plus forte : un banc de
+mesure qu'on ne peut pas monter sur une autre machine ne prouve rien.** La reproductibilité
+prime sur le risque de dérive.
+
+Le risque de dérive n'est pas ignoré pour autant : `load_base` compare chaque volume à ce
+qu'annonce le `MANIFEST.md` de l'export et **refuse d'écrire la base** si un compte bouge.
+La dérive redevient bruyante, ce qui était tout l'objet de la décision d'origine.
+
+Les données sont **100 % synthétiques**, graine 42, aucune donnée réelle d'enseigne.
+Seule exception, la table `weather`, qui porte de la vraie météo historique d'Open-Meteo.
 
 ### Les réponses attendues ne sont pas parsées
 
@@ -99,19 +112,19 @@ question**.
 
 ## 4. Utilisation
 
-Prérequis, une fois :
+Prérequis, une fois — l'export est dans le dépôt, il n'y a rien à récupérer ailleurs :
 
 ```bash
-git -C ../sales-ops-planning-poc archive origin/export-db | tar -x -C data/export
+uv sync --extra sql
 ```
 
 ```bash
-uv run python -m harness.load_base --export data/export
+uv run python -m harness.load_base
 ```
 
 Attendu : `data/maxizoo.duckdb` (~180 Mo, 1 659 181 lignes) et
-`data/maxizoo_dictionnaire.md`. Le chargeur refuse d'écrire si un volume ne tombe pas
-juste. Le dossier `data/` est gitignoré.
+`data/maxizoo_dictionnaire.md`, tous deux **générés donc gitignorés**. Le chargeur refuse
+d'écrire si un volume ne tombe pas juste.
 
 Mesurer :
 
