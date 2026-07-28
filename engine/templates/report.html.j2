@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ plan.title }} — rapport d'investigation</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #1d4ed8; --ok: #047857; --warn: #b45309; --bad: #b91c1c;
+    --card: #f9fafb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --fg: #e5e7eb; --muted: #9ca3af; --line: #262b33;
+      --accent: #7aa2ff; --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+      --card: #161a21;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 52rem; margin: 0 auto; }
+  h1 { font-size: 1.7rem; margin: 0 0 .3rem; line-height: 1.25; }
+  h2 { font-size: 1.15rem; margin: 2.4rem 0 .8rem; padding-bottom: .35rem;
+       border-bottom: 1px solid var(--line); }
+  h3 { font-size: .98rem; margin: 1.4rem 0 .4rem; }
+  .sub { color: var(--muted); font-size: .88rem; margin-bottom: 1.5rem; }
+  .headline {
+    background: var(--card); border-left: 3px solid var(--accent);
+    padding: 1rem 1.2rem; border-radius: 0 6px 6px 0; font-size: 1.05rem;
+  }
+  .tag {
+    display: inline-block; padding: .1rem .5rem; border-radius: 999px;
+    font-size: .74rem; border: 1px solid var(--line); color: var(--muted);
+  }
+  .done { color: var(--ok); border-color: currentColor; }
+  .blocked { color: var(--bad); border-color: currentColor; }
+  .pending, .skipped { color: var(--warn); border-color: currentColor; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  ul { padding-left: 1.2rem; }
+  li { margin: .3rem 0; }
+  code { background: var(--card); padding: .1rem .3rem; border-radius: 4px; font-size: .85em; }
+  .card { background: var(--card); border: 1px solid var(--line);
+          border-radius: 8px; padding: .9rem 1.1rem; margin: .8rem 0; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>{{ plan.title }}</h1>
+  <p class="sub">
+    <code>{{ plan.slug }}</code> · statut <strong>{{ plan.status }}</strong> ·
+    mode {{ plan.mode }} · toolpack <code>{{ plan.toolpack }}</code> ·
+    modele <code>{{ plan.model or "?" }}</code> ·
+    {{ plan.tokens_spent() }} / {{ plan.budget_tokens_total }} tokens
+  </p>
+
+  <h2>Question</h2>
+  <p>{{ plan.brief.question or "—" }}</p>
+
+{% if synthese %}
+  <h2>Synthese</h2>
+  <p class="headline">{{ synthese.headline }}</p>
+  <p>{{ synthese.answer }}</p>
+
+  {% if synthese.evidence %}
+  <h3>Ce qui est etabli</h3>
+  <ul>{% for e in synthese.evidence %}<li>{{ e }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if synthese.caveats %}
+  <h3>Ce qui ne l'est pas</h3>
+  <ul>{% for c in synthese.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if synthese.recommendation %}
+  <h3>Recommandation</h3>
+  <p>{{ synthese.recommendation }}</p>
+  {% endif %}
+  <p class="muted">Synthese generee le {{ meta.generated_utc }} par <code>{{ meta.model }}</code>.</p>
+{% else %}
+  <h2>Synthese</h2>
+  <p class="muted">Aucune synthese : lancer <code>inv review</code>, <code>inv approve</code>
+     puis <code>inv synthesize</code>.</p>
+{% endif %}
+
+  <h2>Cadre de decision</h2>
+  <div class="scroll"><table>
+    <tr><th>Decision</th><td>{{ plan.brief.decision_frame.decision or "—" }}</td></tr>
+    <tr><th>Seuil d'action</th><td>{{ plan.brief.decision_frame.action_threshold or "—" }}</td></tr>
+    <tr><th>Critere d'arret</th><td>{{ plan.brief.decision_frame.kill_criterion or "—" }}</td></tr>
+  </table></div>
+
+  <h2>Taches et findings</h2>
+{% for t in plan.brief.tasks %}
+  <div class="card">
+    <h3>{{ t.id }} — {{ t.title }} <span class="tag {{ t.state }}">{{ t.state }}</span></h3>
+    <p class="muted">{{ t.question }}</p>
+    {% set f = findings.get(t.id) %}
+    {% if f %}
+      <p><strong>Insight.</strong> {{ f.insight or "—" }}</p>
+      <p><strong>Resume.</strong> {{ f.summary or "—" }}</p>
+      <p><strong>Influence.</strong> {{ f.influence or "—" }}</p>
+      {% if f.artifacts %}
+      <p class="muted">Traces auditables :
+        {% for a in f.artifacts %}<code>{{ a }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+      </p>
+      {% endif %}
+      {% if f.chart %}<img src="{{ f.chart }}" alt="graphique" style="max-width:100%">{% endif %}
+    {% else %}
+      <p class="muted">Aucun resultat.</p>
+    {% endif %}
+  </div>
+{% endfor %}
+
+  <h2>Journal d'execution</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>tache</th><th>statut</th><th>debut</th><th>duree</th><th>tokens</th></tr></thead>
+    <tbody>
+    {% for r in plan.logbook.run_log %}
+      <tr><td><code>{{ r.task_id }}</code></td><td>{{ r.status }}</td>
+          <td>{{ r.started_utc | ts }}</td><td>{{ r.duration_s }} s</td><td>{{ r.tokens }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+
+{% if plan.logbook.stop_log %}
+  <h2>Evaluations du critere d'arret</h2>
+  <ul>
+  {% for s in plan.logbook.stop_log %}
+    <li>apres <code>{{ s.after_task }}</code> — strategie <code>{{ s.strategy }}</code> —
+        declenche : <strong>{{ "oui" if s.fired else "non" }}</strong>
+        {% if s.reason %}— {{ s.reason }}{% endif %}</li>
+  {% endfor %}
+  </ul>
+{% endif %}
+
+  <footer>
+    Genere sans LLM par <code>engine/reporter.py</code> (Jinja2).
+    Source de verite : <code>plan.md</code>. Les traces d'outils vivent dans
+    <code>artifacts/</code> et ne sont jamais relues par un modele.
+  </footer>
+
+</main>
+</body>
+</html>
