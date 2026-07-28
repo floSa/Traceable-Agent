@@ -154,13 +154,13 @@ def resolve(questions: list[ReferenceQuestion], database: Path) -> list[Referenc
     Une requete qui ne s'execute pas fait echouer le chargement : une derive de
     l'export doit etre bruyante.
     """
-    import duckdb
-
     if not database.is_file():
         raise FileNotFoundError(
             f"base introuvable : {database}. Construis-la avec "
             "`uv run python -m harness.load_base --export data/export`"
         )
+
+    import duckdb  # apres le controle : base absente est plus probable et plus actionnable
 
     con = duckdb.connect(str(database), read_only=True)
     try:
