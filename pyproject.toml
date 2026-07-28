@@ -1,5 +1,5 @@
 [project]
-name = "investigator"
+name = "traceable-agent"
 version = "0.1.0"
 description = "Moteur d'investigation par taches atomiques, memoire = un fichier markdown"
 readme = "README.md"

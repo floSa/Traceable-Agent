@@ -1,4 +1,4 @@
-# Architecture — investigator
+# Architecture — traceable-agent
 
 Le **COMMENT**. Pour le **POURQUOI** (objectifs, hypothèses, décisions de cadrage),
 voir [CADRAGE.md](CADRAGE.md).

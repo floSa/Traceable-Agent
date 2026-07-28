@@ -1,4 +1,4 @@
-# Cadrage — investigator
+# Cadrage — traceable-agent
 
 Le **POURQUOI**. Pour le **COMMENT** (composants, flux, persistance, décisions
 techniques), voir [ARCHITECTURE.md](ARCHITECTURE.md).

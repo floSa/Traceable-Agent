@@ -1,4 +1,4 @@
-# investigator
+# traceable-agent
 
 **Moteur d'investigation qui répond à une question complexe en la décomposant en tâches atomiques, exécutées une par une dans un contexte LLM vierge, avec un fichier markdown pour seule mémoire.**
 
@@ -373,7 +373,7 @@ rend un petit modèle exploitable.
 ## Structure du projet
 
 ```text
-test_2/
+traceable-agent/
 ├── engine/
 │   ├── schemas.py          # tout l'état persisté + les sorties structurées des LLM
 │   ├── plan.py             # plan.md : écriture atomique, verrouillée, revalidée
