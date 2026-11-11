@@ -10,13 +10,14 @@ paths:
   investigations: ./investigations
 
 # -----------------------------------------------------------------------------
-# Couche modele — pointe sur le service LLM central (~/mes_projets/llm-service),
-# endpoint OpenAI-compatible. Aucun Ollama propre a ce projet.
+# Couche modele — pointe sur le service LLM central
+# (~/mes_projets/Projet-IA/LLM-Service), endpoint OpenAI-compatible. Aucun
+# Ollama propre a ce projet.
 # -----------------------------------------------------------------------------
 llm:
-  base_url: ${INV_LLM_BASE_URL:-http://localhost:11434/v1}
-  model: ${INV_LLM_MODEL:-gemma4:e4b}
-  api_key: ${INV_LLM_API_KEY:-ollama}
+  base_url: ${INV_LLM_BASE_URL:-http://127.0.0.1:8080/v1}
+  model: ${INV_LLM_MODEL:-chat}
+  api_key: ${INV_LLM_API_KEY:-}
   timeout_s: 600
   # auto : tente response_format=json_schema (supporte par le central),
   #        retombe automatiquement sur l'injection du schema dans le prompt.
@@ -27,12 +28,15 @@ llm:
   # 0 pour la mesure : a 0.2, quatre questions sur treize changeaient de verdict
   # entre executions identiques, et la variance masquait l'effet mesure.
   temperature: 0
-  # gemma4:e4b emet des tokens de raisonnement que l'API ne compte pas dans
-  # usage.completion_tokens : on les estime pour que le budget reste honnete.
-  count_reasoning_tokens: true
-  # gemma4:e4b termine parfois son raisonnement et renvoie un contenu VIDE
-  # (finish_reason=stop). Une derniere ligne imperative dans le prompt le
-  # ramene a emettre le JSON. Sans effet sur les modeles qui n'en ont pas besoin.
+  # Le modele "chat" du service central inclut deja le raisonnement dans
+  # usage.completion_tokens (verifie en run reel) : le re-estimer doublerait
+  # le compte. A remettre a true pour un backend qui l'exclut, comme l'ancien
+  # Ollama/gemma4:e4b.
+  count_reasoning_tokens: false
+  # Un modele a raisonnement peut terminer sa reflexion et renvoyer un
+  # contenu VIDE (finish_reason=stop/length). Une derniere ligne imperative
+  # dans le prompt le ramene a emettre le JSON. Sans effet sur les modeles
+  # qui n'en ont pas besoin.
   final_directive: true
 
 # -----------------------------------------------------------------------------

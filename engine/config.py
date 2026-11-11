@@ -27,9 +27,9 @@ class Section(BaseModel):
 
 
 class LLMConfig(Section):
-    base_url: str = "http://localhost:11434/v1"
-    model: str = "gemma4:e4b"
-    api_key: str = "ollama"  # Ollama ignore la valeur, l'en-tete doit exister
+    base_url: str = "http://127.0.0.1:8080/v1"
+    model: str = "chat"
+    api_key: str = ""  # cle obligatoire du service central, fournie par .env
     timeout_s: float = 600.0
     # auto      : tente response_format=json_schema, retombe sur le prompt
     # json_schema / prompt : force l'un des deux
@@ -37,9 +37,12 @@ class LLMConfig(Section):
     # TROU non negociable : retry a feedback sur erreur de validation Pydantic
     max_validation_retries: int = 3
     temperature: float = 0.2
-    # gemma4:e4b emet des tokens de "reasoning" que l'API ne compte pas dans
-    # usage.completion_tokens. On les estime pour que le budget reste honnete.
-    count_reasoning_tokens: bool = True
+    # Mesure sur le service central (modele "chat", Qwen3.5) : le raisonnement
+    # est deja compte dans usage.completion_tokens (il partage le flux de
+    # tokens avec le contenu). Laisser a True recompterait ces tokens en
+    # double ; utile seulement pour un backend qui les exclut (ex. l'ancien
+    # Ollama/gemma4:e4b).
+    count_reasoning_tokens: bool = False
     # Ajoute une derniere ligne imperative au prompt. Indispensable avec un
     # modele a raisonnement, qui sinon "pense" et renvoie un contenu vide.
     final_directive: bool = True
