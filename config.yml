@@ -38,6 +38,13 @@ llm:
   # dans le prompt le ramene a emettre le JSON. Sans effet sur les modeles
   # qui n'en ont pas besoin.
   final_directive: true
+  # Le modele "chat" du service central reflechit par defaut (Qwen3.5).
+  # Mesure en run reel : avec les budgets de tokens de ce moteur, ca epuise
+  # le budget avant le JSON (3/3 tentatives vides, meme avec final_directive).
+  # On coupe la reflexion par defaut. A remettre a true seulement en
+  # remontant au moins brief.max_tokens, agent.max_tokens_per_call et
+  # synthesis.max_tokens.
+  enable_thinking: false
 
 # -----------------------------------------------------------------------------
 # TROU 1 — CONTEXTE PASSE AU SOUS-AGENT

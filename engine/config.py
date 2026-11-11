@@ -46,6 +46,15 @@ class LLMConfig(Section):
     # Ajoute une derniere ligne imperative au prompt. Indispensable avec un
     # modele a raisonnement, qui sinon "pense" et renvoie un contenu vide.
     final_directive: bool = True
+    # Le modele "chat" du service central (Qwen3.5) reflechit par defaut.
+    # Mesure en run reel : avec les budgets de ce moteur (ex. brief.max_tokens
+    # = 4096), le raisonnement consomme tout le budget avant d'emettre le
+    # JSON, et `final_directive` seul n'y change rien (3/3 tentatives
+    # VIDES). On desactive donc la reflexion par defaut via
+    # chat_template_kwargs.enable_thinking. Remettre a true pour profiter du
+    # raisonnement, a condition de remonter les budgets de tokens en
+    # consequence.
+    enable_thinking: bool = False
 
 
 class ContextConfig(Section):
