@@ -6,7 +6,7 @@
 ![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
 ![Pydantic](https://img.shields.io/badge/Pydantic-2.13-E92063?logo=pydantic&logoColor=white)
 ![Typer](https://img.shields.io/badge/Typer-0.27-0B7285)
-![Ollama](https://img.shields.io/badge/Ollama-gemma4:e4b-000000?logo=ollama&logoColor=white)
+![LLM](https://img.shields.io/badge/LLM-chat_(service_central)-412991?logo=openai&logoColor=white)
 
 ## Sommaire
 
@@ -92,23 +92,23 @@ cp .env.example .env
 
 ### Le modèle : service LLM central, pas d'Ollama local
 
-Ce projet **ne lance pas son propre Ollama**. Il consomme le service mutualisé
-`~/mes_projets/llm-service` (conteneur `ollama-central`), qui expose un endpoint
-OpenAI-compatible. C'est le cas « application `uv` locale » du guide
-`llm-service/docs/brancher-un-projet.md`.
+Ce projet **ne lance pas son propre serveur LLM**. Il consomme le service mutualisé
+`~/mes_projets/Projet-IA/LLM-Service` (LiteLLM devant llama.cpp), qui expose un
+endpoint OpenAI-compatible. C'est le cas « application `uv` locale » de son guide
+`docs/brancher-un-projet.md`.
 
 ```bash
-cd ~/mes_projets/llm-service && make up
+cd ~/mes_projets/Projet-IA/LLM-Service && ./scripts/demarrer.sh
 ```
 
 ```bash
-cd ~/mes_projets/llm-service && make models
+curl -s -H "Authorization: Bearer <clé>" http://127.0.0.1:8080/v1/models
 ```
 
 | Accès | URL | Note |
 |---|---|---|
-| Endpoint LLM (hôte) | `http://localhost:11434/v1` | Valeur par défaut du `.env` |
-| Endpoint LLM (réseau `llm-net`) | `http://ollama-central:11434/v1` | Si ce projet est un jour conteneurisé |
+| Endpoint LLM (hôte) | `http://127.0.0.1:8080/v1` | Valeur par défaut du `.env` |
+| Endpoint LLM (réseau `llm-net`) | `http://llm-central:8080/v1` | Si ce projet est un jour conteneurisé |
 | Rapport HTML | `investigations/<date>_<slug>/results/*_report.html` | Fichier local, à ouvrir dans un navigateur |
 
 ## Exemple de bout en bout
@@ -264,9 +264,9 @@ est visible dans [`config.yml`](config.yml)**, jamais enfoui dans le code.
 
 | Variable | Défaut | Effet |
 |---|---|---|
-| `INV_LLM_BASE_URL` | `http://localhost:11434/v1` | Endpoint OpenAI-compatible du service central |
-| `INV_LLM_MODEL` | `gemma4:e4b` | Modèle servi ; défaut universel du parc |
-| `INV_LLM_API_KEY` | `ollama` | Ollama ignore la valeur, mais l'en-tête `Authorization` doit exister |
+| `INV_LLM_BASE_URL` | `http://127.0.0.1:8080/v1` | Endpoint OpenAI-compatible du service central |
+| `INV_LLM_MODEL` | `chat` | Modèle servi (Qwen3.5) ; défaut universel du parc |
+| `INV_LLM_API_KEY` | *(aucun)* | Obligatoire : valeur de `LITELLM_MASTER_KEY` du service central |
 
 ### `config.yml`
 
@@ -274,8 +274,9 @@ est visible dans [`config.yml`](config.yml)**, jamais enfoui dans le code.
 |---|---|---|---|
 | `llm` | `structured_output` | `auto` | Tente `json_schema`, retombe sur le schéma injecté dans le prompt |
 | `llm` | `max_validation_retries` | `3` | Retry à feedback sur erreur Pydantic. Ne pas descendre sous 3 |
-| `llm` | `count_reasoning_tokens` | `true` | Ré-estime les tokens de raisonnement, non comptés par l'API |
+| `llm` | `count_reasoning_tokens` | `false` | Ré-estime les tokens de raisonnement pour un backend qui ne les compte pas dans l'API (ex. l'ancien Ollama/gemma4:e4b) ; le service central les compte déjà |
 | `llm` | `final_directive` | `true` | Ligne impérative finale ; sans elle, un modèle à raisonnement rend un contenu vide |
+| `llm` | `enable_thinking` | `false` | Coupe la réflexion du modèle `chat` (Qwen3.5) — activée par défaut sur le service central, elle épuisait le budget de tokens avant d'émettre le JSON |
 | `context` | `max_chars` | `4000` | Plafond du contexte passé au sous-agent |
 | `context` | `include_dependencies` | `true` | Remonte l'`insight` des tâches de `depends_on` |
 | `context` | `max_dependencies` | `10` | Nombre de dépendances remontées |
@@ -344,6 +345,27 @@ d'un petit modèle doit passer par le **schéma**, où le retry à feedback peut
 Le nombre minimum de tâches, le format du périmètre, et le fait qu'un champ du brief
 n'est pas une tâche sont trois règles portées par le schéma pour cette raison — chacune
 ajoutée après un échec observé.
+
+### Branchement sur le service central (2026-11-11) : ce que le modèle `chat` a imposé
+
+Migration de l'Ollama local (`gemma4:e4b`) vers le service LLM central
+(`~/mes_projets/Projet-IA/LLM-Service`, modèle `chat` = Qwen3.5), endpoint
+`http://127.0.0.1:8080/v1`. Aucune bibliothèque à changer : ce projet appelait déjà
+`/chat/completions` en HTTP brut via `httpx`, jamais l'API native d'Ollama. Deux
+différences mesurées en run réel :
+
+1. **Le raisonnement arrive dans `message.reasoning_content`**, pas `message.reasoning`
+   — et `usage.completion_tokens` le compte déjà (vérifié : un appel saturé en
+   raisonnement rend un `completion_tokens` égal à `max_tokens`). `llm.count_reasoning_tokens`
+   passe donc à `false` par défaut ; le remettre à `true` ferait compter ces tokens en
+   double avec un backend qui les inclut déjà.
+2. **Qwen3.5 réfléchit par défaut.** Avec les budgets de ce moteur (`brief.max_tokens`
+   = 4096), la réflexion consommait tout le budget avant d'émettre le JSON — 3 tentatives
+   sur 3 renvoyaient un contenu vide, même avec `final_directive`. Nouveau paramètre
+   `llm.enable_thinking` (défaut `false`) : il coupe la réflexion via
+   `chat_template_kwargs.enable_thinking`. Premier `inv new` réussi dans ces conditions :
+   brief de 5 tâches, 1440 tokens ; premier `inv step` : tâche `done`, 8 appels d'outil,
+   8703 tokens.
 
 ## Tests
 

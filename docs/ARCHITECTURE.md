@@ -62,7 +62,7 @@ CLI (`inv`), qui appelle un service LLM externe et mutualisé.
 | Templates | jinja2 | 3.1.6 |
 | Base analytique (extra `sql`) | duckdb | 1.5.5 |
 | Tests | pytest | 9.1.1 |
-| Modèle | `gemma4:e4b` via le service central [`llm-service`](../../llm-service/) | endpoint `http://localhost:11434/v1` |
+| Modèle | `chat` via le service central [`LLM-Service`](../../LLM-Service/) | endpoint `http://127.0.0.1:8080/v1` |
 
 **Aucun framework d'agents.** La boucle fait **185 lignes** de code, lisibles d'un trait.
 
@@ -122,7 +122,7 @@ sequenceDiagram
     participant F as plan.md
     participant A as agent
     participant P as ToolPack
-    participant M as gemma4:e4b
+    participant M as chat (service central)
 
     L->>F: load() + revalidation complète
     L->>L: next_runnable(retry_blocked, skip)

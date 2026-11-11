@@ -67,7 +67,7 @@ synthèse qui distingue ce qui est établi de ce qui ne l'est pas.
 | Contrainte | Détail |
 |---|---|
 | Langage | Python 3.12, géré par `uv` (jamais `venv` + `pip`) |
-| Modèle | Le service central [`llm-service`](../../llm-service/) — **aucun Ollama propre au projet** |
+| Modèle | Le service central [`LLM-Service`](../../LLM-Service/) — **aucun Ollama propre au projet** |
 | Dépendances | pydantic v2, httpx, python-frontmatter, ruamel.yaml, typer, rich, jinja2 ; duckdb uniquement pour le pack `sql` |
 | Framework d'agents | Aucun. La boucle doit tenir sous 200 lignes lisibles |
 | Matériel | GPU 16 Go partagé — d'où un modèle « E4B » et un budget de tokens explicite |
@@ -127,8 +127,8 @@ Les hypothèses qui ne se lisent pas dans le code, avec ce qui les remettrait en
 | Templates | jinja2 3.1.6 | BSD-3-Clause |
 | Base analytique (extra) | duckdb 1.5.5 | MIT |
 | Tests | pytest 9.1.1 | MIT |
-| Serveur LLM | Ollama (service central) | MIT |
-| Modèle | `gemma4:e4b` | Gemma Terms of Use (Google) — pas une licence OSI |
+| Serveur LLM | llama.cpp, derrière LiteLLM (service central) | MIT |
+| Modèle | `chat` (Qwen3.5-4B) | Licence du modèle — voir le service central, pas une licence OSI |
 
 ---
 
@@ -265,11 +265,13 @@ conception**, pas un comportement :
 
 ## 9. Références
 
-- **Service LLM central** : `~/mes_projets/llm-service` — un Ollama mutualisé pour tout
-  le parc, et son guide [`docs/brancher-un-projet.md`](../../llm-service/docs/brancher-un-projet.md).
+- **Service LLM central** : `~/mes_projets/Projet-IA/LLM-Service` — LiteLLM devant
+  llama.cpp, mutualisé pour tout le parc, et son guide
+  [`docs/brancher-un-projet.md`](../../LLM-Service/docs/brancher-un-projet.md).
   Ce projet relève du cas « application `uv` locale », qui tape l'endpoint
   OpenAI-compatible publié sur l'hôte.
-- **Modèle** : `gemma4:e4b` — modèle à raisonnement, contexte 128K, function-calling
-  natif, distribué sous *Gemma Terms of Use*.
+- **Modèle** : `chat` (Qwen3.5) — modèle à raisonnement (activé par défaut côté service,
+  coupé ici via `llm.enable_thinking`), contexte 16K sur ce service, distribué sous ses
+  propres conditions.
 - **Trois comportements de ce modèle**, mesurés en run réel et intégrés au code, sont
   documentés dans le [README](../README.md#ce-que-gemma4e4b-a-imposé-mesuré-pas-supposé).
