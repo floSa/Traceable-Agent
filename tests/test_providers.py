@@ -147,8 +147,11 @@ def test_erreur_http_sans_fallback_remonte() -> None:
 
 
 def test_les_tokens_de_raisonnement_sont_comptes() -> None:
+    # count_reasoning_tokens=False par defaut depuis le service central (son
+    # usage.completion_tokens inclut deja le raisonnement) : ce test verifie
+    # le mecanisme d'estimation, encore utile pour un backend qui l'exclut.
     p = OpenAICompatibleProvider(
-        LLMConfig(),
+        LLMConfig(count_reasoning_tokens=True),
         client=_client(lambda r: _reply('{"insight":"a","score":1}', reasoning="x" * 400)),
     )
     _, usage = p.complete("sys", "u", Answer)

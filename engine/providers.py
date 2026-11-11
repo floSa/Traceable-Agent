@@ -10,8 +10,9 @@ seule fois, dans `BaseProvider`, donc `FakeProvider` l'exerce a l'identique :
 tester la boucle sans LLM teste aussi le mecanisme qui rend un petit modele
 exploitable.
 
-Cible : le service LLM central (`~/mes_projets/llm-service`), endpoint
-OpenAI-compatible `http://localhost:11434/v1`, modele `gemma4:e4b`.
+Cible : le service LLM central (`~/mes_projets/Projet-IA/LLM-Service`), endpoint
+OpenAI-compatible `http://127.0.0.1:8080/v1` (ou `http://llm-central:8080/v1` depuis
+un conteneur attache au reseau `llm-net`), modele `chat`.
 """
 
 from __future__ import annotations
@@ -247,6 +248,11 @@ class OpenAICompatibleProvider(BaseProvider):
                     "schema": schema.model_json_schema(),
                 },
             }
+        if not self.cfg.enable_thinking:
+            # Desactive le raisonnement d'un modele qui pense par defaut
+            # (ex. "chat" sur le service central) : sans ca, il consomme son
+            # budget de tokens en reflexion avant d'emettre le JSON attendu.
+            body["chat_template_kwargs"] = {"enable_thinking": False}
 
         try:
             resp = self._client.post("/chat/completions", json=body)
@@ -271,13 +277,17 @@ class OpenAICompatibleProvider(BaseProvider):
         data = resp.json()
         message = (data.get("choices") or [{}])[0].get("message", {}) or {}
         content = message.get("content") or ""
-        reasoning = message.get("reasoning") or ""
+        # Le service central rend le raisonnement dans `reasoning_content`
+        # (certains backends plus anciens utilisaient `reasoning`) : on
+        # accepte les deux noms de champ.
+        reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
         finish = (data.get("choices") or [{}])[0].get("finish_reason")
 
         raw_usage = data.get("usage") or {}
         completion = int(raw_usage.get("completion_tokens", 0))
         if self.cfg.count_reasoning_tokens and reasoning:
-            # gemma4:e4b n'inclut pas le raisonnement dans le compteur.
+            # Certains backends (ex. l'ancien Ollama/gemma4:e4b) n'incluent pas
+            # le raisonnement dans ce compteur : on le re-estime alors.
             completion += len(reasoning) // 4
         usage = Usage(
             prompt_tokens=int(raw_usage.get("prompt_tokens", 0)),
