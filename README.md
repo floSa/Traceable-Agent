@@ -105,6 +105,18 @@ cd ~/mes_projets/Projet-IA/LLM-Service && ./scripts/demarrer.sh
 curl -s -H "Authorization: Bearer <clé>" http://127.0.0.1:8080/v1/models
 ```
 
+La clé est la clé propre de l'application, jamais la clé maîtresse du service. Elle est
+créée et écrite dans le `.env` (avec l'adresse hôte) par :
+
+```bash
+~/mes_projets/Projet-IA/LLM-Service/scripts/cle.sh creer traceable-agent \
+  --dans "$PWD/.env" --noms INV_LLM_BASE_URL,INV_LLM_API_KEY --hote
+```
+
+Procédure : `LLM-Service/docs/brancher-une-application.md`. Révocation :
+`scripts/cle.sh revoquer traceable-agent` ; consommation : `scripts/cle.sh consommation`
+(depuis le dépôt LLM-Service).
+
 | Accès | URL | Note |
 |---|---|---|
 | Endpoint LLM (hôte) | `http://127.0.0.1:8080/v1` | Valeur par défaut du `.env` |
@@ -266,7 +278,7 @@ est visible dans [`config.yml`](config.yml)**, jamais enfoui dans le code.
 |---|---|---|
 | `INV_LLM_BASE_URL` | `http://127.0.0.1:8080/v1` | Endpoint OpenAI-compatible du service central |
 | `INV_LLM_MODEL` | `chat` | Modèle servi (Qwen3.5) ; défaut universel du parc |
-| `INV_LLM_API_KEY` | *(aucun)* | Obligatoire : valeur de `LITELLM_MASTER_KEY` du service central |
+| `INV_LLM_API_KEY` | *(aucun)* | Obligatoire : clé propre `traceable-agent` (`LLM-Service/scripts/cle.sh creer`), jamais la clé maîtresse du service central |
 
 ### `config.yml`
 
@@ -366,6 +378,13 @@ différences mesurées en run réel :
    `chat_template_kwargs.enable_thinking`. Premier `inv new` réussi dans ces conditions :
    brief de 5 tâches, 1440 tokens ; premier `inv step` : tâche `done`, 8 appels d'outil,
    8703 tokens.
+
+### Clé propre sur le service central (2026-11-14)
+
+L'application n'utilise plus la clé maîtresse du service : elle a reçu sa clé propre
+`traceable-agent` (`cle.sh creer`, voir plus haut). Essai réel avec cette clé :
+`uv run inv new "Pourquoi le churn des clients Entreprise a-t-il augmente au premier semestre 2026 ?" --yes`
+→ plan d'enquête écrit, 1 604 tokens.
 
 ## Tests
 
