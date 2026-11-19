@@ -16,3 +16,4 @@ Chaque dossier `<YYYY-MM-DD_slug>/` contient :
 | 2026-07-25 | [`pourquoi-le-churn-des-clients-entreprise`](2026-07-25_pourquoi-le-churn-des-clients-entreprise/plan.md) | Analyse des causes de l'augmentation du churn des clients Entreprise au S1 2026 | files | ready |
 | 2026-07-25 | [`pourquoi-le-churn-des-clients-entreprise`](2026-07-25_pourquoi-le-churn-des-clients-entreprise/plan.md) | Analyse des causes de l'augmentation du churn des clients Entreprise au S1 2026 | files | ready |
 | 2026-07-25 | [`pourquoi-le-churn-des-clients-entreprise`](2026-07-25_pourquoi-le-churn-des-clients-entreprise/plan.md) | Analyse des causes de l'augmentation du churn des clients Entreprise au S1 2026 | files | ready |
+| 2026-11-14 | [`pourquoi-le-churn-des-clients-entreprise`](2026-11-14_pourquoi-le-churn-des-clients-entreprise/plan.md) | Enquête sur l'augmentation du churn des clients Entreprise au premier semestre 2026 | files | ready |
